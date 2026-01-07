@@ -1,0 +1,12 @@
+{
+  "id": "run-0001",
+  "actions": [
+    { "type": "tile", "params": { "tile_m": 64, "tile_n": 64, "tile_k": 16 }, "mapped_params": { "kernel_name": "gemm_tile_64", "launch_params": { "grid": [8,8,1], "block": [32,8,1], "shared_mem_bytes": 12288 } } }
+  ],
+  "matrix_specs": [ { "name": "A", "shape": [512,512], "dtype": "float32" }, { "name": "B", "shape": [512,512], "dtype": "float32" } ],
+  "kernel_artifact": { "kernel_name": "gemm_tile_64", "source_path": "results/run-0001/kernel.cu", "build_command": "nvcc -O3 results/run-0001/kernel.cu -o results/run-0001/kernel" },
+  "correctness": { "passed": true, "rtol": 1e-5, "atol": 1e-6, "max_abs_error": 1.2e-6, "max_rel_error": 3.1e-7 },
+  "performance": { "warmup_runs": 5, "timed_runs": 20, "latency_ms_median": 1.23, "GFLOPS_median": 420.1 },
+  "profiling": { "nvprof_path": "results/run-0001/profile/nvprof.csv", "brief_summary": "SM eff 78%" },
+  "reproducibility": { "gpu_model": "A100", "cuda_version": "12.0", "container_image": "myimage:latest", "command_line": "python run_benchmark.py results/input/run-0001.json" }
+}
