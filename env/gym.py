@@ -2,6 +2,8 @@ import torch
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+from typing import Tuple, Dict, Optional, List
+import json
 
 def matmul(mat1: np.ndarray, mat2: np.ndarray):
     """
@@ -35,12 +37,6 @@ Key Responsibilities (Member 2):
 5. State transitions and validity checking
 """
 
-import numpy as np
-import gymnasium as gym
-from gymnasium import spaces
-from typing import Tuple, Dict, Optional, List
-import json
-
 
 class TensorDecompositionEnv(gym.Env):
     """
@@ -68,9 +64,9 @@ class TensorDecompositionEnv(gym.Env):
         Initialize the tensor decomposition environment.
 
         Args:
-            matrix_size: (m, n, p) for m×p × p×n matrix multiplication
+            matrix_size: (m, n, p) for m×n × nxp matrix multiplication
             max_rank: Maximum number of rank-1 tensors allowed (episode length)
-            reward_type: "sparse" or "dense" reward structure
+            reward_type: "sparse"- reward only at completion, "dense"- reward at each step
             illegal_action_penalty: Penalty for illegal actions
         """
         super().__init__()
@@ -102,15 +98,18 @@ class TensorDecompositionEnv(gym.Env):
         # For 2×2×2: 5^2 * 5^2 * 5^2 = 15,625 possible actions
 
         # Simplified action space: discretized choices
-        self.action_space_size = (5 ** self.m) * (5 ** self.n) * (5 ** self.p)
-        self.action_space = spaces.Discrete(self.action_space_size)
+        self.action_space_size = (5 ** (self.m*self.n)) * (5 ** (self.n*self.p)) * (5 ** (self.m*self.p))
+        self.action_space = spaces.Discrete(self.action_space_size) # this tells gym the possible set of actions
+        # ... represented as integers. Gym env are expected to have action_space attribute.
+        # the action integer is later decoded into uvw in _action_to_rank1_tensor().
+        # ... Gym now knows, valid actions are from 0 to self.action_space_size-1 from above line of code
 
         # Observation space: flattened residual tensor + metadata
         # Residual tensor: m×n×p values
-        # Metadata: [current_step, num_rank1_used, residual_norm]
-        obs_size = self.m * self.n * self.p + 3
-        self.observation_space = spaces.Box(
-            low=-100.0,
+        # Metadata: [current_step, num_rank1_used, residual_norm]. current_step >= num_rank1_used because steps may be invalid.
+        obs_size = (self.m*self.n) * (self.n*self.p) * (self.m*self.p) + 3 # length of vector the agent sees at each step
+        self.observation_space = spaces.Box( # continuous because norms and rank1 tensors are considered to be continuous
+            low=-100.0, # -100 to 100 because resulting rank1 3d tensor from uvw can take large values too (see example in internet)
             high=100.0,
             shape=(obs_size,),
             dtype=np.float32
@@ -120,19 +119,23 @@ class TensorDecompositionEnv(gym.Env):
         """
         Create the target tensor for matrix multiplication.
 
-        For C = A × B where A is m×p and B is p×n:
+        For C = A × B where A is m×n and B is nxp:
         T[i,j,k] = 1 means: C[i,j] += A[i,k] * B[k,j]
 
         Returns:
-            Target tensor of shape (m, n, p)
+            Target tensor of shape (mn, np, mp)
         """
-        tensor = np.zeros((self.m, self.n, self.p))
+        tensor = np.zeros((self.m*self.n, self.n*self.p, self.m*self.p), dtype=float)
 
-        # Standard matrix multiplication structure
+        # Standard matrix multiplication tensor
         for i in range(self.m):
             for j in range(self.n):
                 for k in range(self.p):
-                    tensor[i, j, k] = 1.0
+                    idx_mn = i * self.n + j  # (i,j)
+                    idx_np = j * self.p + k  # (j,k)
+                    idx_mp = i * self.p + k  # (i,k)
+
+                    tensor[idx_mn, idx_np, idx_mp] = 1.0
 
         return tensor
 
@@ -143,7 +146,7 @@ class TensorDecompositionEnv(gym.Env):
         Action space is discretized: each vector component ∈ {-2, -1, 0, 1, 2}
 
         Args:
-            action: Discrete action index
+            action: Discrete action index given by the policy network, which gets mapped to u,v,w vectors.
 
         Returns:
             u (shape m), v (shape n), w (shape p): vectors forming rank-1 tensor
@@ -154,21 +157,21 @@ class TensorDecompositionEnv(gym.Env):
         # Decode action into three vectors
         remaining = action
 
-        # Extract w (p components)
-        w = np.zeros(self.p)
-        for i in range(self.p):
+        # Extract w (m*p components)
+        w = np.zeros(self.m*self.p)
+        for i in range(self.m*self.p):
             w[i] = values[remaining % 5]
             remaining //= 5
 
-        # Extract v (n components)
-        v = np.zeros(self.n)
-        for i in range(self.n):
+        # Extract v (n*p components)
+        v = np.zeros(self.n*self.p)
+        for i in range(self.n*self.p):
             v[i] = values[remaining % 5]
             remaining //= 5
 
-        # Extract u (m components)
-        u = np.zeros(self.m)
-        for i in range(self.m):
+        # Extract u (m*n components)
+        u = np.zeros(self.m*self.n)
+        for i in range(self.m*self.n):
             u[i] = values[remaining % 5]
             remaining //= 5
 
@@ -193,14 +196,15 @@ class TensorDecompositionEnv(gym.Env):
         Compute the rank-1 tensor from outer product: u ⊗ v ⊗ w.
 
         Args:
-            u (m,), v (n,), w (p,): Vector components
+            u (mn,), v (np,), w (mp,): Vector components
 
         Returns:
-            Rank-1 tensor of shape (m, n, p)
+            Rank-1 tensor of shape (mn, np, mp)
         """
         # Outer product: T[i,j,k] = u[i] * v[j] * w[k]
         tensor = np.einsum('i,j,k->ijk', u, v, w)
-        return tensor
+        return tensor # gets converted into 3d tensor as shown in the AlphaTensor paper
+        # ...first dim= a1-a4, second dim=b1-b4, and third dim=c1-c4
 
     def _update_residual(self, rank1_tensor: np.ndarray) -> None:
         """
@@ -235,7 +239,7 @@ class TensorDecompositionEnv(gym.Env):
 
         # Metadata
         metadata = np.array([
-            self.current_step / self.max_rank,  # Normalized step
+            self.current_step / self.max_rank,  # Normalized steps completed
             len(self.algorithm) / self.max_rank,  # Normalized rank used
             np.linalg.norm(self.residual_tensor)  # Residual norm
         ], dtype=np.float32)
@@ -254,9 +258,9 @@ class TensorDecompositionEnv(gym.Env):
         """
         Calculate reward based on action outcome.
 
-        Reward Structure (Member 2's Key Responsibility):
+        Reward Structure :
         1. Dense reward: reward for reducing residual norm
-        2. Sparse reward: only reward on completion
+        2. Sparse reward: only reward on completion (will opt for this, but 1 can be used too)
         3. Penalties: illegal actions, inefficiency
 
         Args:
@@ -283,7 +287,7 @@ class TensorDecompositionEnv(gym.Env):
                 reward += 100.0 + efficiency_bonus
 
                 # Extra bonus if we beat the naive algorithm
-                naive_rank = self.m * self.n * self.p
+                naive_rank = self.m * self.n * self.p # 8 for 2x2 matmul
                 if len(self.algorithm) < naive_rank:
                     reward += 50.0
 
@@ -356,10 +360,10 @@ class TensorDecompositionEnv(gym.Env):
         """
         Execute one step in the environment.
 
-        This is the core simulation logic (Member 2's main responsibility).
+        The core simulation logic
 
         Args:
-            action: Discrete action (encoded rank-1 tensor)
+            action: Discrete action (encoded rank-1 tensor) OR u,v,w explicitly
 
         Returns:
             observation: New state
