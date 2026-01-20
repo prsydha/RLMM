@@ -1,12 +1,13 @@
 # Environment settings
 
-MATRIX_SIZE = 2  # Size of the matrices to be multiplied (n x n)
-MAX_EPISODE_STEPS = MATRIX_SIZE**3 + 2  # Maximum steps per episode
+MATRIX_SIZE = 3                 # Size of the matrices to be multiplied (n x n)
+VECTOR_LEN = MATRIX_SIZE ** 2   # 9
+TENSOR_DIM = VECTOR_LEN ** 3    # 729
 
-# Agent Settings (for later)
-LEARNING_RATE = 1e-3
-BATCH_SIZE = 64
-GAMMA = 0.99     # Discount factor
-EPSILON_START = 1.0
-EPSILON_END = 0.01
-EPSILON_DECAY = 500
+# standard n^3 algorithm takes 27 steps for 3x3 matrix multiplication
+MAX_STEPS = 30
+
+# --- Model Architecture ---
+HIDDEN_DIM = 512            # Number of neurons in hidden layers of the neural network ( increased from 256 to 512 for better capacity )
+N_HEADS = 3 * VECTOR_LEN    #  3 vectors * 9 entries = 27 heads
+INPUT_DIM = TENSOR_DIM      # 729
