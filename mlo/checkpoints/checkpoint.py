@@ -2,7 +2,7 @@ import torch
 import os
 import logging  # Added for logging integration
 
-def save_checkpoint(model, step, path="checkpoints", optimizer=None, scheduler=None, logger=None):
+def save_checkpoint(model, step, path=".", optimizer=None, scheduler=None, logger=None):
     os.makedirs(path, exist_ok=True)
     checkpoint = {
         "step": step,
