@@ -36,7 +36,7 @@ class MCTSAgent:
             # if the node represents a terminal state(solved), value is high
             # otherwise, use the neural network to evaluate
             value = self._expand_and_evaluate(node)
-    
+
 
             # C. Backpropagation
             self._backpropagate(search_path, value)
@@ -44,7 +44,8 @@ class MCTSAgent:
         # 3. select best move (greedy with respect to visit count)
         # return the action with the most visits
         best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
-        return best_action
+        u, v, w = self._parse_action(best_action)
+        return u, v, w
     
     def _select_child(self, node):
         """
