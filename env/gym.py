@@ -139,44 +139,6 @@ class TensorDecompositionEnv(gym.Env):
 
         return tensor
 
-    def _action_to_rank1_tensor(self, action: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Convert discrete action to rank-1 tensor components (u, v, w).
-
-        Action space is discretized: each vector component ∈ {-1, 0, 1}
-
-        Args:
-            action: Discrete action index given by the policy network, which gets mapped to u,v,w vectors.
-
-        Returns:
-            u (shape m), v (shape n), w (shape p): vectors forming rank-1 tensor
-        """
-        # Map to base-5 representation
-        values = [-1, 0, 1]
-
-        # Decode action into three vectors
-        remaining = action
-
-        # Extract w (m*p components)
-        w = np.zeros(self.m*self.p)
-        for i in range(self.m*self.p):
-            w[i] = values[remaining % 5]
-            remaining //= 5
-
-        # Extract v (n*p components)
-        v = np.zeros(self.n*self.p)
-        for i in range(self.n*self.p):
-            v[i] = values[remaining % 5]
-            remaining //= 5
-
-        # Extract u (m*n components)
-        u = np.zeros(self.m*self.n)
-        for i in range(self.m*self.n):
-            u[i] = values[remaining % 5]
-            remaining //= 5
-
-        return u, v, w
-
     def _is_valid_action(self, u: np.ndarray, v: np.ndarray, w: np.ndarray) -> bool:
         """
         Check if the rank-1 tensor is valid (not all zeros).
@@ -236,15 +198,15 @@ class TensorDecompositionEnv(gym.Env):
         """
 
         # Metadata
-        metadata = np.array([
-            self.current_step / self.max_rank,  # Normalized steps completed
-            len(self.algorithm) / self.max_rank,  # Normalized rank used
-            np.linalg.norm(self.residual_tensor)  # Residual norm
-        ], dtype=np.float32)
+        # metadata = np.array([
+        #     self.current_step / self.max_rank,  # Normalized steps completed
+        #     len(self.algorithm) / self.max_rank,  # Normalized rank used
+        #     np.linalg.norm(self.residual_tensor)  # Residual norm
+        # ], dtype=np.float32)
 
         # Combine
-        obs = np.concatenate([self.residual_tensor, metadata]).astype(np.float32)
-        return obs
+
+        return self.residual_tensor
 
     def _calculate_reward(
             self,
@@ -527,7 +489,7 @@ class TensorDecompositionEnv(gym.Env):
                 "complete": self._is_decomposition_complete()
             }
 
-
+# just an outmost function that is used to test the env. Not the part of environment class
 def test_environment():
     """
     Test the environment to ensure it works correctly.
@@ -551,37 +513,38 @@ def test_environment():
     print(f"   ✓ Target rank: {info['target_rank']}")
 
     print("\n3. Testing action decoding...")
-    action = 1000
-    u, v, w = env._action_to_rank1_tensor(action)
-    print(f"   ✓ Action {action} decoded to:")
-    print(f"     u = {u}")
-    print(f"     v = {v}")
-    print(f"     w = {w}")
+    # action = 1000
+    # u, v, w = env._action_to_rank1_tensor(action)
 
-    print("\n4. Testing rank-1 tensor computation...")
-    rank1 = env._compute_rank1_tensor(u, v, w)
-    print(f"   ✓ Rank-1 tensor shape: {rank1.shape}")
-    print(f"   ✓ Rank-1 tensor:\n{rank1}")
-
-    print("\n5. Testing step execution...")
-    for step in range(5):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        print(f"   Step {step + 1}: reward={reward:6.2f}, "
-              f"norm={info['residual_norm']:6.4f}, "
-              f"valid={info['action_valid']}, "
-              f"rank={info['rank_used']}")
-
-        if terminated or truncated:
-            break
-
-    print("\n6. Testing algorithm description...")
-    algo_desc = env.get_algorithm_description()
-    print(f"   ✓ Algorithm uses {algo_desc['num_multiplications']} multiplications")
-    print(f"   ✓ Naive algorithm uses {algo_desc['naive_multiplications']} multiplications")
-
-    print("\n✅ All tests passed!")
-    print("=" * 70)
+    # print(f"   ✓ Action {action} decoded to:")
+    # print(f"     u = {u}")
+    # print(f"     v = {v}")
+    # print(f"     w = {w}")
+    #
+    # print("\n4. Testing rank-1 tensor computation...")
+    # rank1 = env._compute_rank1_tensor(u, v, w)
+    # print(f"   ✓ Rank-1 tensor shape: {rank1.shape}")
+    # print(f"   ✓ Rank-1 tensor:\n{rank1}")
+    #
+    # print("\n5. Testing step execution...")
+    # for step in range(5):
+    #     action = env.action_space.sample()
+    #     obs, reward, terminated, truncated, info = env.step(action)
+    #     print(f"   Step {step + 1}: reward={reward:6.2f}, "
+    #           f"norm={info['residual_norm']:6.4f}, "
+    #           f"valid={info['action_valid']}, "
+    #           f"rank={info['rank_used']}")
+    #
+    #     if terminated or truncated:
+    #         break
+    #
+    # print("\n6. Testing algorithm description...")
+    # algo_desc = env.get_algorithm_description()
+    # print(f"   ✓ Algorithm uses {algo_desc['num_multiplications']} multiplications")
+    # print(f"   ✓ Naive algorithm uses {algo_desc['naive_multiplications']} multiplications")
+    #
+    # print("\n✅ All tests passed!")
+    # print("=" * 70)
 
 
 if __name__ == "__main__":
