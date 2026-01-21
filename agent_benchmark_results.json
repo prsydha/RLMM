@@ -1,0 +1,132 @@
+{
+  "run_id": "run-1768741340",
+  "problem": {
+    "matrix_shape": [
+      2,
+      2
+    ],
+    "dtype": "float32",
+    "operation": "matmul"
+  },
+  "environment": {
+    "gpu": "CUDA Device 0 (Compute 75)",
+    "python": "3.10.0",
+    "cupy": "13.6.0"
+  },
+  "implementations": [
+    {
+      "name": "naive",
+      "source": "naive",
+      "kernel_name": "matmul_naive_2x2",
+      "actions": [],
+      "correctness": {
+        "passed": true,
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "rtol": 1e-05,
+        "atol": 1e-06
+      },
+      "performance": {
+        "latency_us": 21.632,
+        "num_multiplications": 8,
+        "op_count": 16
+      },
+      "kernel": {
+        "launch": {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "block": [
+            2,
+            2,
+            1
+          ],
+          "shared_mem_bytes": 0
+        }
+      }
+    },
+    {
+      "name": "strassen",
+      "source": "strassen",
+      "kernel_name": "matmul_strassen_2x2",
+      "actions": [
+        {
+          "type": "algorithm_optimization",
+          "description": "Strassen's 7-multiplication algorithm"
+        }
+      ],
+      "correctness": {
+        "passed": true,
+        "max_abs_error": 5.960464477539063e-08,
+        "max_rel_error": 4.37948841636171e-07,
+        "rtol": 1e-05,
+        "atol": 1e-06
+      },
+      "performance": {
+        "latency_us": 23.952,
+        "num_multiplications": 7,
+        "op_count": 14
+      },
+      "kernel": {
+        "launch": {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "block": [
+            7,
+            1,
+            1
+          ],
+          "shared_mem_bytes": 28
+        }
+      }
+    },
+    {
+      "name": "agent",
+      "source": "agent",
+      "kernel_name": "matmul_agent_2x2",
+      "actions": [
+        {
+          "type": "tensor_decomposition",
+          "description": "Agent-discovered 7-rank decomposition"
+        }
+      ],
+      "correctness": {
+        "passed": true,
+        "max_abs_error": 5.960464477539063e-08,
+        "max_rel_error": 7.299147597450428e-08,
+        "rtol": 1e-05,
+        "atol": 1e-06
+      },
+      "performance": {
+        "latency_us": 22.784,
+        "num_multiplications": 7,
+        "op_count": 14
+      },
+      "kernel": {
+        "launch": {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "block": [
+            2,
+            2,
+            1
+          ],
+          "shared_mem_bytes": 0
+        }
+      }
+    }
+  ],
+  "summary": {
+    "best_latency": 21.632,
+    "best_multiplications": 7,
+    "all_correct": true
+  }
+}

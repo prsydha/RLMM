@@ -1,0 +1,17 @@
+{
+  "id": "run-0001",
+  "env_version": "v0.3.1",
+  "seed": 1234,
+  "actions": [
+    { "type": "tile", "params": { "tile_m": 64, "tile_n": 64, "tile_k": 16 } },
+    { "type": "loop_order", "params": { "order": ["i", "k", "j"] } },
+    { "type": "layout", "params": { "A": "row", "B": "col", "C": "row" } }
+  ],
+  "matrix_specs": [
+    { "name": "A", "shape": [512, 512], "dtype": "float32", "generator": { "method": "random", "params": { "distribution": "normal", "mean": 0, "std": 1 } } },
+    { "name": "B", "shape": [512, 512], "dtype": "float32", "generator": { "method": "random", "params": { "distribution": "normal", "mean": 0, "std": 1 } } }
+  ],
+  "constraints": { "memory_limit_bytes": 1073741824, "max_tile": 256 },
+  "reference_validation": { "method": "numpy", "rtol": 1e-5, "atol": 1e-6 },
+  "measurement_protocol": { "warmup_runs": 5, "timed_runs": 20 }
+}
