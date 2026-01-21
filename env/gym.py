@@ -56,7 +56,7 @@ class TensorDecompositionEnv(gym.Env):
     def __init__(
             self,
             matrix_size: Tuple[int, int, int] = (2, 2, 2),
-            max_rank: int = 20,
+            max_rank: int = 20, # max rank is 8 in practice, but 20 used here for larger room for error
             reward_type: str = "sparse",
             illegal_action_penalty: float = -1.0,
     ):
@@ -93,12 +93,12 @@ class TensorDecompositionEnv(gym.Env):
         self.best_rank = max_rank
 
         # Action space: Choose u, v, w vectors for rank-1 tensor u⊗v⊗w
-        # Each vector has entries in {-2, -1, 0, 1, 2} (allows linear combinations)
-        # Total actions = (5^m) * (5^n) * (5^p)
-        # For 2×2×2: 5^2 * 5^2 * 5^2 = 15,625 possible actions
+        # Each vector has entries in {-1, 0, 1} (allows linear combinations)
+        # Total actions = (3^m) * (3^n) * (3^p)
+        # For 2×2×2: 3^2 * 3^2 * 3^2 = 729 possible actions
 
         # Simplified action space: discretized choices
-        self.action_space_size = (5 ** (self.m*self.n)) * (5 ** (self.n*self.p)) * (5 ** (self.m*self.p))
+        self.action_space_size = (3 ** (self.m*self.n)) * (3 ** (self.n*self.p)) * (3 ** (self.m*self.p))
         self.action_space = spaces.Discrete(self.action_space_size) # this tells gym the possible set of actions
         # ... represented as integers. Gym env are expected to have action_space attribute.
         # the action integer is later decoded into uvw in _action_to_rank1_tensor().
@@ -143,7 +143,7 @@ class TensorDecompositionEnv(gym.Env):
         """
         Convert discrete action to rank-1 tensor components (u, v, w).
 
-        Action space is discretized: each vector component ∈ {-2, -1, 0, 1, 2}
+        Action space is discretized: each vector component ∈ {-1, 0, 1}
 
         Args:
             action: Discrete action index given by the policy network, which gets mapped to u,v,w vectors.
@@ -151,8 +151,8 @@ class TensorDecompositionEnv(gym.Env):
         Returns:
             u (shape m), v (shape n), w (shape p): vectors forming rank-1 tensor
         """
-        # Map to base-5 representation
-        values = [-2, -1, 0, 1, 2]
+        # Map to base-3 representation
+        values = [-1, 0, 1]
 
         # Decode action into three vectors
         remaining = action
@@ -160,20 +160,20 @@ class TensorDecompositionEnv(gym.Env):
         # Extract w (m*p components)
         w = np.zeros(self.m*self.p)
         for i in range(self.m*self.p):
-            w[i] = values[remaining % 5]
-            remaining //= 5
+            w[i] = values[remaining % 3]
+            remaining //= 3
 
         # Extract v (n*p components)
         v = np.zeros(self.n*self.p)
         for i in range(self.n*self.p):
-            v[i] = values[remaining % 5]
-            remaining //= 5
+            v[i] = values[remaining % 3]
+            remaining //= 3
 
         # Extract u (m*n components)
         u = np.zeros(self.m*self.n)
         for i in range(self.m*self.n):
-            u[i] = values[remaining % 5]
-            remaining //= 5
+            u[i] = values[remaining % 3]
+            remaining //= 3
 
         return u, v, w
 
@@ -452,7 +452,7 @@ class TensorDecompositionEnv(gym.Env):
             },
             "num_multiplications": len(self.algorithm),
             "naive_multiplications": self.m * self.n * self.p,
-            "improvement": f"{(1 - len(self.algorithm) / (self.m * self.n * self.p)) * 100:.1f}%",
+            "improvement": f"{(self.max_rank - len(self.algorithm) / (self.m * self.n * self.p)) * 100:.1f}%",
             "rank1_tensors": self.algorithm,
             "verification": {
                 "residual_norm": float(np.linalg.norm(self.residual_tensor)),
@@ -514,8 +514,8 @@ class TensorDecompositionEnv(gym.Env):
             print(f"Best rank found: {self.best_rank}")
 
             if self._is_decomposition_complete():
-                print("\n✅ DECOMPOSITION COMPLETE!")
-                efficiency = (1 - len(self.algorithm) / (self.m * self.n * self.p)) * 100
+                print("\nDECOMPOSITION COMPLETE!")
+                efficiency = (8 - len(self.algorithm) / (self.m * self.n * self.p)) * 100
                 print(f"Efficiency gain: {efficiency:.1f}%")
 
             print("=" * 70 + "\n")
@@ -541,7 +541,6 @@ def test_environment():
     env = TensorDecompositionEnv(matrix_size=(2, 2, 2), max_rank=20)
 
     print("\n1. Testing environment creation...")
-    print(f"   ✓ Action space size: {env.action_space.n:,}")
     print(f"   ✓ Observation space shape: {env.observation_space.shape}")
     print(f"   ✓ Target tensor shape: {env.target_tensor.shape}")
 
