@@ -20,7 +20,7 @@ class MCTSAgent:
         root = TreeNode(root_state, prior=1.0)
 
         # 1. expansion of root node (initialize root)
-        self._evaluate_and_expand_node(root)
+        self._evaluate_and_expand(root)
 
         # 2. simulation loop
         for _ in range(self.n_simulations):
@@ -35,7 +35,7 @@ class MCTSAgent:
             # B. Expansion and Evaluation
             # if the node represents a terminal state(solved), value is high
             # otherwise, use the neural network to evaluate
-            value = self._expand_and_evaluate(node)
+            value = self._evaluate_and_expand(node)
 
 
             # C. Backpropagation

@@ -232,13 +232,16 @@ class TensorDecompositionEnv(gym.Env):
         Returns:
             Reward value
         """
+
+        reward = 0.0 
+
         if not action_valid:
             return self.illegal_action_penalty
 
         if self.reward_type == "dense":
             # Dense reward: progress toward zero residual
             progress = prev_norm - curr_norm
-            reward = progress * 10.0  # Scale progress
+            reward = progress * 5.0  # Scale progress
 
             # Bonus for completion
             if decomposition_complete:
@@ -276,7 +279,10 @@ class TensorDecompositionEnv(gym.Env):
                     reward += 100.0
             else:
                 # Small penalty for each step to encourage efficiency
-                reward = -0.1
+                reward += -1
+
+                # progress = prev_norm - curr_norm
+                reward += -curr_norm
 
         return reward
 
