@@ -55,7 +55,12 @@ for episode in range(config["episodes"]):
     while not done:
         # # MCTS search (measure latency)
         # t0 = time.time()
-        action = agent.search(obs)
+        u, v, w = agent.search(obs)
+        action = {
+            'u': u,
+            'v': v,
+            'w': w
+        }
         # search_latency_us = (time.time() - t0) * 1e6
 
         # Environment step
