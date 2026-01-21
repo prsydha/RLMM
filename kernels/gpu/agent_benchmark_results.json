@@ -1,0 +1,132 @@
+{
+  "run_id": "run-1768981158",
+  "problem": {
+    "matrix_shape": [
+      2,
+      2
+    ],
+    "dtype": "float32",
+    "operation": "matmul"
+  },
+  "environment": {
+    "gpu": "CUDA Device 0 (Compute 86)",
+    "python": "3.11.9",
+    "cupy": "13.6.0"
+  },
+  "implementations": [
+    {
+      "name": "naive",
+      "source": "naive",
+      "kernel_name": "matmul_naive_2x2",
+      "actions": [],
+      "correctness": {
+        "passed": true,
+        "max_abs_error": 2.9802322387695312e-08,
+        "max_rel_error": 1.0697907981693788e-07,
+        "rtol": 1e-05,
+        "atol": 1e-06
+      },
+      "performance": {
+        "latency_us": 12.288,
+        "num_multiplications": 8,
+        "op_count": 16
+      },
+      "kernel": {
+        "launch": {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "block": [
+            2,
+            2,
+            1
+          ],
+          "shared_mem_bytes": 0
+        }
+      }
+    },
+    {
+      "name": "strassen",
+      "source": "strassen",
+      "kernel_name": "matmul_strassen_2x2",
+      "actions": [
+        {
+          "type": "algorithm_optimization",
+          "description": "Strassen's 7-multiplication algorithm"
+        }
+      ],
+      "correctness": {
+        "passed": true,
+        "max_abs_error": 5.960464477539063e-08,
+        "max_rel_error": 9.567396830334474e-08,
+        "rtol": 1e-05,
+        "atol": 1e-06
+      },
+      "performance": {
+        "latency_us": 12.208,
+        "num_multiplications": 7,
+        "op_count": 14
+      },
+      "kernel": {
+        "launch": {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "block": [
+            7,
+            1,
+            1
+          ],
+          "shared_mem_bytes": 28
+        }
+      }
+    },
+    {
+      "name": "agent",
+      "source": "agent",
+      "kernel_name": "matmul_agent_2x2",
+      "actions": [
+        {
+          "type": "tensor_decomposition",
+          "description": "Agent-discovered 7-rank decomposition"
+        }
+      ],
+      "correctness": {
+        "passed": true,
+        "max_abs_error": 5.960464477539063e-08,
+        "max_rel_error": 9.567396830334474e-08,
+        "rtol": 1e-05,
+        "atol": 1e-06
+      },
+      "performance": {
+        "latency_us": 11.056,
+        "num_multiplications": 7,
+        "op_count": 14
+      },
+      "kernel": {
+        "launch": {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "block": [
+            2,
+            2,
+            1
+          ],
+          "shared_mem_bytes": 0
+        }
+      }
+    }
+  ],
+  "summary": {
+    "best_latency": 11.056,
+    "best_multiplications": 7,
+    "all_correct": true
+  }
+}

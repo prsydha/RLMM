@@ -81,7 +81,7 @@ class TensorDecompositionEnv(gym.Env):
         self.target_tensor = self._create_target_tensor()
 
         # State: residual tensor (what's left to decompose)
-        self.residual_tensor = None
+        self.residual_tensor = self.target_tensor.copy()
 
         # Algorithm discovered so far (list of rank-1 tensors)
         self.algorithm = []
@@ -139,11 +139,11 @@ class TensorDecompositionEnv(gym.Env):
 
         return tensor
 
-    def _action_to_rank1_tensor(self, action: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _action_to_rank1_tensor(self, action: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Convert discrete action to rank-1 tensor components (u, v, w).
 
-        Action space is discretized: each vector component ∈ {-2, -1, 0, 1, 2}
+        Action space is discretized: each vector component ∈ {-1, 0, 1}
 
         Args:
             action: Discrete action index given by the policy network, which gets mapped to u,v,w vectors.
@@ -152,7 +152,7 @@ class TensorDecompositionEnv(gym.Env):
             u (shape m), v (shape n), w (shape p): vectors forming rank-1 tensor
         """
         # Map to base-5 representation
-        values = [-2, -1, 0, 1, 2]
+        values = [-1, 0, 1]
 
         # Decode action into three vectors
         remaining = action
@@ -234,8 +234,6 @@ class TensorDecompositionEnv(gym.Env):
         Returns:
             Flattened observation: [residual_tensor (flattened), step, rank, norm]
         """
-        # Flatten residual tensor
-        flat_residual = self.residual_tensor.flatten()
 
         # Metadata
         metadata = np.array([
@@ -245,7 +243,7 @@ class TensorDecompositionEnv(gym.Env):
         ], dtype=np.float32)
 
         # Combine
-        obs = np.concatenate([flat_residual, metadata]).astype(np.float32)
+        obs = np.concatenate([self.residual_tensor, metadata]).astype(np.float32)
         return obs
 
     def _calculate_reward(
@@ -355,7 +353,7 @@ class TensorDecompositionEnv(gym.Env):
         return obs, info
 
     def step(
-            self, action: int
+            self, action: Dict
     ) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """
         Execute one step in the environment.
@@ -375,7 +373,8 @@ class TensorDecompositionEnv(gym.Env):
         self.current_step += 1
 
         # Decode action to rank-1 tensor
-        u, v, w = self._action_to_rank1_tensor(action)
+        # u, v, w = self._action_to_rank1_tensor(action)
+        u, v, w = action["u"], action["v"], action["w"]
 
         # Check validity (constraint enforcement - Member 2)
         action_valid = self._is_valid_action(u, v, w)
