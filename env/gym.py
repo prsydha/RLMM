@@ -93,23 +93,16 @@ class TensorDecompositionEnv(gym.Env):
         self.best_rank = max_rank
 
         # Action space: Choose u, v, w vectors for rank-1 tensor u⊗v⊗w
-        # Each vector has entries in {-2, -1, 0, 1, 2} (allows linear combinations)
-        # Total actions = (5^m) * (5^n) * (5^p)
-        # For 2×2×2: 5^2 * 5^2 * 5^2 = 15,625 possible actions
-
-        # Simplified action space: discretized choices
-        self.action_space_size = (5 ** (self.m*self.n)) * (5 ** (self.n*self.p)) * (5 ** (self.m*self.p))
-        self.action_space = spaces.Discrete(self.action_space_size) # this tells gym the possible set of actions
-        # ... represented as integers. Gym env are expected to have action_space attribute.
-        # the action integer is later decoded into uvw in _action_to_rank1_tensor().
-        # ... Gym now knows, valid actions are from 0 to self.action_space_size-1 from above line of code
+        # Each vector has entries in {-1, 0, 1} (allows linear combinations)
+        # Total actions = (3^m) * (3^n) * (3^p)
+        # For 2×2×2: 3^2 * 3^2 * 3^2 = 729 possible actions
 
         # Observation space: flattened residual tensor + metadata
         # Residual tensor: m×n×p values
         # Metadata: [current_step, num_rank1_used, residual_norm]. current_step >= num_rank1_used because steps may be invalid.
-        obs_size = (self.m*self.n) * (self.n*self.p) * (self.m*self.p) + 3 # length of vector the agent sees at each step
+        obs_size = (self.m*self.n) * (self.n*self.p) * (self.m*self.p) # length of tensor the agent sees at each step
         self.observation_space = spaces.Box( # continuous because norms and rank1 tensors are considered to be continuous
-            low=-100.0, # -100 to 100 because resulting rank1 3d tensor from uvw can take large values too (see example in internet)
+            low=-100.0, # -100 to 100 because resulting rank1 3d tensor from uvw can take large values too
             high=100.0,
             shape=(obs_size,),
             dtype=np.float32
@@ -241,27 +234,27 @@ class TensorDecompositionEnv(gym.Env):
         if self.reward_type == "dense":
             # Dense reward: progress toward zero residual
             progress = prev_norm - curr_norm
-            reward = progress * 5.0  # Scale progress
+            reward = progress * 10.0  # Scale progress
 
             # Bonus for completion
             if decomposition_complete:
                 # Reward based on efficiency (fewer rank-1 tensors = better)
-                efficiency_bonus = (self.max_rank - len(self.algorithm)) * 5.0
-                reward += 100.0 + efficiency_bonus
+                efficiency_bonus = (self.max_rank - len(self.algorithm)) * 10.0
+                reward += 10.0 + efficiency_bonus
 
                 # Extra bonus if we beat the naive algorithm
                 naive_rank = self.m * self.n * self.p # 8 for 2x2 matmul
                 if len(self.algorithm) < naive_rank:
-                    reward += 50.0
+                    reward += 10.0
 
                 # Track best
                 if len(self.algorithm) < self.best_rank:
                     self.best_rank = len(self.algorithm)
-                    reward += 100.0  # New best!
+                    reward += 10.0
 
             # Penalty for not making progress
             if progress <= 0:
-                reward -= 0.5
+                reward -= 1
 
         else:  # sparse reward
             if decomposition_complete:
@@ -271,18 +264,17 @@ class TensorDecompositionEnv(gym.Env):
                 # Efficiency bonus
                 naive_rank = self.m * self.n * self.p
                 efficiency = (naive_rank - len(self.algorithm)) / naive_rank
-                reward = base_reward + efficiency * 200.0
+                reward = base_reward + efficiency * 10.0
 
                 # Track best
                 if len(self.algorithm) < self.best_rank:
                     self.best_rank = len(self.algorithm)
-                    reward += 100.0
+                    reward += 10.0
             else:
+                progress = prev_norm-curr_norm
+                reward += progress * 10.0
                 # Small penalty for each step to encourage efficiency
-                reward += -1
-
-                # progress = prev_norm - curr_norm
-                reward += -curr_norm
+                reward += -1-curr_norm
 
         return reward
 
