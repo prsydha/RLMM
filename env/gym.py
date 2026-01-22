@@ -264,7 +264,7 @@ class TensorDecompositionEnv(gym.Env):
                 # Efficiency bonus
                 naive_rank = self.m * self.n * self.p
                 efficiency = (naive_rank - len(self.algorithm)) / naive_rank
-                reward = base_reward + efficiency * 100.0
+                reward = base_reward + efficiency * 10.0
 
                 # Track best
                 if len(self.algorithm) < self.best_rank:
