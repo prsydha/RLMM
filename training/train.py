@@ -8,6 +8,14 @@ import torch.nn.functional as F
 import random
 from collections import deque
 import time
+import subprocess
+
+# Run benchmark visualization automatically
+try:
+    print("Running benchmark visualization...")
+    subprocess.call(["python", "visualize_benchmark.py"])
+except Exception as e:
+    print(f"Failed to run benchmark visualization: {e}")
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -16,7 +24,7 @@ from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
 from models.pv_network import PolicyValueNet
 from project.logger import init_logger, log_metrics
-# from mlo.checkpoints.checkpoint import save_checkpoint
+# from mlo.checkpoint import save_checkpoint
 
 # --- Hyperparameters ---
 LEARNING_RATE = 1e-3
