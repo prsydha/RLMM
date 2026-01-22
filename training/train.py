@@ -1,10 +1,18 @@
+import sys
+import os
+from pathlib import Path
+import numpy as np
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import time
 import numpy as np
 import torch
 
-from env import TensorDecompositionEnv
-from agent import MCTSAgent
-from models import PolicyValueNet
+from env.gym import TensorDecompositionEnv
+from agent.mcts_agent import MCTSAgent
+from models.pv_network import PolicyValueNet
 from project.logger import init_logger, log_metrics
 from mlo.checkpoints.checkpoint import save_checkpoint
 
@@ -61,11 +69,13 @@ for episode in range(config["episodes"]):
             'v': v,
             'w': w
         }
+
         # search_latency_us = (time.time() - t0) * 1e6
 
         # Environment step
         obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
+        print("\n\n Done status: ", done)
 
         episode_reward += reward
         step_count += 1
@@ -92,7 +102,19 @@ for episode in range(config["episodes"]):
             "rank_used": info["rank_used"],
             "action_valid": int(info["action_valid"]),
             "action_sparsity": action_sparsity,
+            "action": action
         }, step=global_step)
+
+        print(
+        f"Episode {episode:03d} | "
+        f"Reward: {episode_reward:7.2f} | "
+        f"Rank: {info['rank_used']} | "
+        f"Residual: {info['residual_norm']:.4e}"
+        f"Action: {action} | "
+        f"Steps: {step_count} | "
+        f"Observation residual: {np.linalg.norm(obs):.2f} | "
+    
+    )
 
     # --------------------
     # Episode summary table
@@ -106,6 +128,7 @@ for episode in range(config["episodes"]):
         info["rank_used"]
     )
     wandb.log({"episode_summary": table})
+    # print(episode, episode_reward, info["residual_norm"], info["rank_used"])
 
     # --------------------
     # Checkpoint
@@ -113,9 +136,13 @@ for episode in range(config["episodes"]):
     if episode % config["checkpoint_interval"] == 0:
         save_checkpoint(model, episode)
 
-    print(
-        f"Episode {episode:03d} | "
-        f"Reward: {episode_reward:7.2f} | "
-        f"Rank: {info['rank_used']} | "
-        f"Residual: {info['residual_norm']:.4e}"
-    )
+    # print(
+    #     f"Episode {episode:03d} | "
+    #     f"Reward: {episode_reward:7.2f} | "
+    #     f"Rank: {info['rank_used']} | "
+    #     f"Residual: {info['residual_norm']:.4e}"
+    #     f"Action: {action} | "
+    #     f"Steps: {step_count} | "
+    #     f"Observation residual: {np.linalg.norm(obs):.2f} | "
+    
+    # )

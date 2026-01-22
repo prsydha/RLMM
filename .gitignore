@@ -1,1 +1,18 @@
 kernels/gpu/rlmm-gpu
+
+# Weights & Biases
+wandb/
+
+# Logs
+*.log
+
+# PyTorch checkpoints
+*.pt
+*.pth
+checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
