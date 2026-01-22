@@ -2,6 +2,14 @@ import sys
 import os
 from pathlib import Path
 import numpy as np
+import subprocess
+
+# Run benchmark visualization automatically
+try:
+    print("Running benchmark visualization...")
+    subprocess.call(["python", "visualize_benchmark.py"])
+except Exception as e:
+    print(f"Failed to run benchmark visualization: {e}")
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -14,7 +22,7 @@ from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
 from models.pv_network import PolicyValueNet
 from project.logger import init_logger, log_metrics
-from mlo.checkpoints.checkpoint import save_checkpoint
+from mlo.checkpoint import save_checkpoint
 
 config = {
     "run_name": "alphatensor_mcts_v1",
@@ -119,15 +127,18 @@ for episode in range(config["episodes"]):
     # --------------------
     # Episode summary table
     # --------------------
-    import wandb
-    table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank"])
-    table.add_data(
-        episode,
-        episode_reward,
-        info["residual_norm"],
-        info["rank_used"]
-    )
-    wandb.log({"episode_summary": table})
+    try:
+        import wandb
+        table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank"])
+        table.add_data(
+            episode,
+            episode_reward,
+            info["residual_norm"],
+            info["rank_used"]
+        )
+        wandb.log({"episode_summary": table})
+    except Exception as e:
+        print(f"WandB logging failed: {e}. Skipping episode summary log.")
     # print(episode, episode_reward, info["residual_norm"], info["rank_used"])
 
     # --------------------
