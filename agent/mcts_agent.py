@@ -44,8 +44,7 @@ class MCTSAgent:
         # 3. select best move (greedy with respect to visit count)
         # return the action with the most visits
         best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
-        u, v, w = self._parse_action(best_action)
-        return u, v, w
+        return best_action
     
     def _select_child(self, node):
         """
