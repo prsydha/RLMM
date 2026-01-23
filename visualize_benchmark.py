@@ -30,9 +30,18 @@ def visualize_results():
 
     # 3. Extract Data
     implementations = data.get("implementations", [])
+    run_id = data.get("run_id", "unknown_run")
+    env_info = data.get("environment", {})
     
+    # Update config with environment info
+    wandb.config.update({
+        "original_run_id": run_id,
+        "gpu": env_info.get("gpu"),
+        "cupy_version": env_info.get("cupy")
+    })
+
     # Prepare data for Table
-    # Columns: Implementation, Latency (us), Multiplications, Op Count
+    # Columns: Implementation, Latency (us), Multiplications, Op Count, Run ID
     table_data = []
     
     # Prepare data for Custom Charts (lists)
@@ -49,7 +58,7 @@ def visualize_results():
         ops = perf.get("op_count", 0)
         
         # Table row
-        table_data.append([name, latency, mults, ops])
+        table_data.append([name, latency, mults, ops, run_id])
         
         # Chart lists
         names.append(name)
@@ -57,7 +66,7 @@ def visualize_results():
         multiplications.append(mults)
 
     # 4. Log Table
-    columns = ["Implementation", "Latency (us)", "Multiplications", "Op Count"]
+    columns = ["Implementation", "Latency (us)", "Multiplications", "Op Count", "Source Run ID"]
     table = wandb.Table(data=table_data, columns=columns)
     wandb.log({"benchmark_table": table})
 

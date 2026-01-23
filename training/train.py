@@ -12,10 +12,11 @@ import subprocess
 
 # Run benchmark visualization automatically
 try:
-    print("Running benchmark visualization...")
-    subprocess.call(["python", "visualize_benchmark.py"])
+    print("Running benchmark update with trained agent...")
+    subprocess.call([sys.executable, "update_benchmark.py"])
+    subprocess.call([sys.executable, "visualize_benchmark.py"])
 except Exception as e:
-    print(f"Failed to run benchmark visualization: {e}")
+    print(f"Failed to run benchmark update: {e}")
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -45,7 +46,7 @@ config = {
     "epochs": EPOCHS,
     "episodes_per_epoch": EPISODES_PER_EPOCH,
     "mcts_simulations": 50,
-    "checkpoint_interval": 20,
+    "checkpoint_interval": 50,
     "device": "cuda" if torch.cuda.is_available() else "cpu"
 }
 
