@@ -23,7 +23,7 @@ from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
 from models.pv_network import PolicyValueNet
 from project.logger import init_logger, log_metrics
-from mlo.checkpoint import save_checkpoint
+from mlo.checkpoint import save_checkpoint, load_checkpoint
 
 config = {
     "run_name": "alphatensor_mcts_v1",
@@ -66,8 +66,30 @@ checkpoints_summary = []
 # --------------------
 
 global_step = 0
+start_episode = 0
 
-for episode in range(config["episodes"]):
+# --------------------
+# Auto-Resume Logic
+# --------------------
+checkpoint_dir = "checkpoints"
+if os.path.exists(checkpoint_dir):
+    checkpoints = [f for f in os.listdir(checkpoint_dir) if f.startswith("model_step_") and f.endswith(".pt")]
+    if checkpoints:
+        # Find latest by step number in filename
+        latest_ckpt = max(checkpoints, key=lambda x: int(x.split("_")[-1].split(".")[0]))
+        ckpt_path = os.path.join(checkpoint_dir, latest_ckpt)
+        print(f"🔄 Found latest checkpoint: {ckpt_path}. Resuming...")
+        
+        try:
+            global_step, loaded_episode = load_checkpoint(model, ckpt_path)
+            start_episode = loaded_episode + 1
+            print(f"✅ Resumed from Episode {loaded_episode}, Global Step {global_step}")
+        except Exception as e:
+            print(f"⚠️ Failed to load checkpoint: {e}. Starting from scratch.")
+            global_step = 0
+            start_episode = 0
+
+for episode in range(start_episode, config["episodes"]):
     obs, info = env.reset()
     done = False
     episode_reward = 0

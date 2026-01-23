@@ -116,6 +116,14 @@ If you run into issues or need further modifications, refer to this doc or ask f
   - `wandb.log_artifact()`: Creates a versioned **Artifact** in WandB, which is the recommended way to store models.
 - **Impact**: You can now see and download the actual model weights directly from the Weights & Biases dashboard.
 
+## 10. Added Intelligent Auto-Resume Feature
+- **Feature**: The script now automatically detects and resumes from the latest local checkpoint.
+- **Changes**:
+  - Updated `mlo/checkpoint.py` to store and retrieve the episode number correctly.
+  - Modified `training/train.py` to scan the `checkpoints/` folder on startup.
+  - If found, it automatically loads the latest model, restores the `global_step` count, and skips already-completed episodes.
+- **Impact**: If you stop the training (Ctrl+C) or your computer restarts, simply running the script again will pick up exactly where it left off.
+
 ## Summary of All Benefits
 - **Dynamic Benchmarks**: Agent performance updates based on training, showing real steps and latency with full metadata traceability (Run ID, GPU info).
 - **Full Model Traceability**: Download actual model weight files (.pt) directly from WandB via Files and Artifacts.

@@ -89,8 +89,9 @@ def load_checkpoint(model, ckpt_path, optimizer=None, scheduler=None, logger=Non
     if scheduler and "scheduler_state" in ckpt:
         scheduler.load_state_dict(ckpt["scheduler_state"])
     step = ckpt.get("step", 0)
+    episode = ckpt.get("episode", 0)
     if logger:
-        logger.info(f"Checkpoint loaded from {ckpt_path}, resuming at step {step}")
+        logger.info(f"Checkpoint loaded from {ckpt_path}, resuming at episode {episode}, step {step}")
     else:
-        print(f"Checkpoint loaded from {ckpt_path}, resuming at step {step}")
-    return step
+        print(f"Checkpoint loaded from {ckpt_path}, resuming at episode {episode}, step {step}")
+    return step, episode
