@@ -14,7 +14,9 @@ from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
 from models.pv_network import PolicyValueNet
 from project.logger import init_logger, log_metrics
-from mlo.checkpoints.checkpoint import save_checkpoint
+from mlo.checkpoint import save_checkpoint
+from training.visualizer_server import VisualizerServer
+
 
 config = {
     "run_name": "alphatensor_mcts_v1",
@@ -50,6 +52,11 @@ agent = MCTSAgent(
 # Training loop
 # --------------------
 
+# Start visualizer server
+viz_server = VisualizerServer()
+viz_server.start()
+
+start_train_time = time.time()
 global_step = 0
 
 for episode in range(config["episodes"]):
@@ -90,7 +97,7 @@ for episode in range(config["episodes"]):
             np.sum(u == 0) +
             np.sum(v == 0) +
             np.sum(w == 0)
-        ) / (len(u) + len(v) + len(w))
+        ) / (u.size + v.size + w.size)
 
         # --------------------
         # Log step metrics
@@ -104,6 +111,20 @@ for episode in range(config["episodes"]):
             "action_sparsity": action_sparsity,
             "action": action
         }, step=global_step)
+
+        # Broadcast to visualizer
+        viz_server.broadcast({
+            "type": "step",
+            "global_step": global_step,
+            "episode": episode,
+            "step_count": step_count,
+            "reward": reward,
+            "residual": info["residual_norm"],
+            "rank": info["rank_used"],
+            "sparsity": action_sparsity,
+            "action": action,
+            "elapsed": time.time() - start_train_time
+        })
 
         print(
         f"Episode {episode:03d} | "
