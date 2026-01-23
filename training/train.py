@@ -31,7 +31,7 @@ config = {
     "max_rank": 20,
     "episodes": 200,
     "mcts_simulations": 50,
-    "checkpoint_interval": 20,
+    "checkpoint_interval": 50,
     "device": "cuda" if torch.cuda.is_available() else "cpu"
 }
 
@@ -148,7 +148,7 @@ for episode in range(config["episodes"]):
     # --------------------
     # Checkpoint
     # --------------------
-    if episode % 5 == 0:  # Reduced interval to 5 for better visibility
+    if episode % config["checkpoint_interval"] == 0:
         save_checkpoint(model, global_step, start_time=start_time, episode=episode)
         checkpoints_summary.append({
             "episode": episode, 
