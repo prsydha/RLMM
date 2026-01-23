@@ -6,10 +6,11 @@ import subprocess
 
 # Run benchmark visualization automatically
 try:
-    print("Running benchmark visualization...")
-    subprocess.call(["python", "visualize_benchmark.py"])
+    print("Running benchmark update with trained agent...")
+    subprocess.call([sys.executable, "update_benchmark.py"])
+    subprocess.call([sys.executable, "visualize_benchmark.py"])
 except Exception as e:
-    print(f"Failed to run benchmark visualization: {e}")
+    print(f"Failed to run benchmark update: {e}")
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -36,6 +37,8 @@ config = {
 
 init_logger(config)
 
+start_time = time.time()
+
 # --------------------
 # Initialize env, model, agent
 # --------------------
@@ -53,6 +56,10 @@ agent = MCTSAgent(
     n_simulations=config["mcts_simulations"],
     device=config["device"]
 )
+
+episode_summaries = []
+
+checkpoints_summary = []
 
 # --------------------
 # Training loop
@@ -127,16 +134,13 @@ for episode in range(config["episodes"]):
     # --------------------
     # Episode summary table
     # --------------------
+    episode_summaries.append((episode, episode_reward, info["residual_norm"], info["rank_used"]))
     try:
         import wandb
         table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank"])
-        table.add_data(
-            episode,
-            episode_reward,
-            info["residual_norm"],
-            info["rank_used"]
-        )
-        wandb.log({"episode_summary": table})
+        for ep, rew, res, rnk in episode_summaries:
+            table.add_data(ep, rew, res, rnk)
+        wandb.log({"episode_summary": table}, step=global_step)
     except Exception as e:
         print(f"WandB logging failed: {e}. Skipping episode summary log.")
     # print(episode, episode_reward, info["residual_norm"], info["rank_used"])
@@ -145,7 +149,21 @@ for episode in range(config["episodes"]):
     # Checkpoint
     # --------------------
     if episode % config["checkpoint_interval"] == 0:
-        save_checkpoint(model, episode)
+        save_checkpoint(model, global_step, start_time=start_time, episode=episode)
+        checkpoints_summary.append({
+            "episode": episode, 
+            "step": global_step, 
+            "run_duration": time.time() - start_time, 
+            "file": f"model_step_{episode}.pt"
+        })
+        try:
+            import wandb
+            table = wandb.Table(columns=["Episode", "Step", "Run Duration (s)", "File"])
+            for ckpt in checkpoints_summary:
+                table.add_data(ckpt["episode"], ckpt["step"], ckpt["run_duration"], ckpt["file"])
+            wandb.log({"checkpoints_summary": table}, step=global_step)
+        except Exception as e:
+            print(f"WandB checkpoint table logging failed: {e}")
 
     # print(
     #     f"Episode {episode:03d} | "
@@ -157,3 +175,16 @@ for episode in range(config["episodes"]):
     #     f"Observation residual: {np.linalg.norm(obs):.2f} | "
     
     # )
+
+# Log total run time
+total_time = time.time() - start_time
+log_metrics({"total_run_time": total_time}, step=config["episodes"])
+print(f"Training completed in {total_time:.2f} seconds")
+
+# Update benchmark with trained agent
+try:
+    print("Updating benchmark with trained agent...")
+    subprocess.call([sys.executable, "update_benchmark.py"])
+    subprocess.call([sys.executable, "visualize_benchmark.py"])
+except Exception as e:
+    print(f"Failed to update benchmark: {e}")

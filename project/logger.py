@@ -17,13 +17,16 @@ def init_logger(config, offline=False):
     
     try:
         mode = "offline" if offline else "online"
-        wandb.init(
-            project="alpha_tensor_rl",
-            name=config.get("run_name"),
-            config=config,
-            mode=mode,
-            reinit=True  # Allow reinit in case of previous runs
-        )
+        init_kwargs = {
+            "project": "alpha_tensor_rl",
+            "name": config.get("run_name"),
+            "config": config,
+            "mode": mode,
+            "reinit": True  # Allow reinit in case of previous runs
+        }
+        if "entity" in config:
+            init_kwargs["entity"] = config["entity"]
+        wandb.init(**init_kwargs)
         _wandb_enabled = True
         logging.info("WandB initialized successfully")
     except Exception as e:
