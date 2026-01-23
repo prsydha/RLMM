@@ -58,7 +58,7 @@ class TensorDecompositionEnv(gym.Env):
             matrix_size: Tuple[int, int, int] = (2, 2, 2),
             max_rank: int = 20,
             reward_type: str = "sparse",
-            illegal_action_penalty: float = -1.0,
+            illegal_action_penalty: float = -2.0,
     ):
         """
         Initialize the tensor decomposition environment.
@@ -256,7 +256,7 @@ class TensorDecompositionEnv(gym.Env):
             if progress <= 0:
                 reward -= 1
 
-        else:  # sparse reward
+        else:  # sparse reward with shaping
             if decomposition_complete:
                 # Only reward on completion
                 base_reward = 100.0
@@ -264,17 +264,28 @@ class TensorDecompositionEnv(gym.Env):
                 # Efficiency bonus
                 naive_rank = self.m * self.n * self.p
                 efficiency = (naive_rank - len(self.algorithm)) / naive_rank
-                reward = base_reward + efficiency * 10.0
+                reward = base_reward + efficiency * 50.0
 
                 # Track best
                 if len(self.algorithm) < self.best_rank:
                     self.best_rank = len(self.algorithm)
-                    reward += 10.0
+                    reward += 50.0
             else:
-                progress = prev_norm-curr_norm
-                reward += progress * 10.0
+                # Reward shaping: encourage progress even without completion
+                progress = prev_norm - curr_norm
+                if progress > 0:
+                    reward += progress * 10.0  # Increased from 10.0
+                
+                # # Bonus for getting close to solution
+                # if curr_norm < 1.0:
+                #     reward += 5.0
+                # if curr_norm < 0.5:
+                #     reward += 10.0
+                # if curr_norm < 0.1:
+                #     reward += 20.0
+                
                 # Small penalty for each step to encourage efficiency
-                reward += -1-curr_norm
+                reward += -1.0
 
         return reward
 
