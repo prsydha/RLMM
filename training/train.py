@@ -148,13 +148,13 @@ for episode in range(config["episodes"]):
     # --------------------
     # Checkpoint
     # --------------------
-    if episode % config["checkpoint_interval"] == 0:
+    if episode % 5 == 0:  # Reduced interval to 5 for better visibility
         save_checkpoint(model, global_step, start_time=start_time, episode=episode)
         checkpoints_summary.append({
             "episode": episode, 
             "step": global_step, 
             "run_duration": time.time() - start_time, 
-            "file": f"model_step_{episode}.pt"
+            "file": f"model_step_{global_step}.pt"
         })
         try:
             import wandb
