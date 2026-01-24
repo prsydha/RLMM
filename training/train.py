@@ -31,7 +31,7 @@ LEARNING_RATE = 1e-3
 BATCH_SIZE = 32
 REPLAY_BUFFER_SIZE = 5000
 EPOCHS = 100         # Total training loops
-EPISODES_PER_EPOCH = 5  # Self-play games per loop
+EPISODES_PER_EPOCH = 10  # Self-play games per loop
 MCTS_SIMS = 50       # Search depth per move
 
 config = {
@@ -89,7 +89,7 @@ def train():
                 # run MCTS to get the best action distribution
                 # we need MCTS to return action probabilities, not just the best move
                 # we'll peek into the root node of the MCTS after search
-                best_action = mcts.search(obs)
+                best_action, visit_marginals = mcts.search_with_policy(obs)
             
                 # extract visit counts from Root -> Policy target
                 # we need to map visit counts to the output heads
@@ -107,7 +107,7 @@ def train():
                 done = terminated or truncated
 
                 # store data : (state, action_tuple, result_placeholder)
-                episode_data.append([obs.flatten(), best_action])
+                episode_data.append([obs.flatten(), visit_marginals])
 
                 obs = next_obs
                 steps += 1
@@ -163,9 +163,9 @@ def train():
             print(f"  Episode {episode+1}: Steps={steps}, Result={final_value}")
 
             for data in episode_data:
-                state_flat, action_tuple = data
-                replay_buffer.append((state_flat, action_tuple, final_value))
-            
+                state_flat, policy_target = data
+                replay_buffer.append((state_flat, policy_target, final_value))
+
         # --- B. Training Phase (Network Update)--- once per Epoch ( after several episodes )
 
         net.train() # set to training mode
@@ -177,7 +177,7 @@ def train():
         total_loss = 0
         for _ in range(10): # 10 gradient steps per epoch
             batch = random.sample(replay_buffer, BATCH_SIZE)
-            states, actions, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists
+            states, policy_targets, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists
 
             # prepare tensors
             states_tensor = torch.FloatTensor(np.array(states)).to(device) # shape (BATCH_SIZE, state_dim) # pytorch converts numpy array to tensor faster and more reliably than raw Python lists
@@ -197,17 +197,33 @@ def train():
             # we must split the 'actions' tuple (batch of 12/27 ints) into separate targets for each head
             # actions is a list of tuples: [(1, 0, -1, ...), (...), ...]
             # convert to tensor : (batch_size, 12/27)
-            action_targets = torch.LongTensor(actions).to(device) # LongTensor for integer targets
-            # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
-            action_targets = action_targets + 1
+            # action_targets = torch.LongTensor(actions).to(device) # LongTensor for integer targets
+            # # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
+            # action_targets = action_targets + 1
 
+            # policy loss with soft targets
             policy_loss = 0
             # iterate over each head
+            # for i, head_logits in enumerate(policy_logits):
+            #     # head_logits : (B, n_actions)
+            #     # target_probs : (B, n_actions)
+            #     # target i : (batch_size) -> the i-th integer of the action tuple
+
+            #     # head_loss = F.cross_entropy(policy_logits[i], action_targets[:, i])
+            #     # policy_loss += head_loss
+
+            #     target_probs = torch.FloatTensor([a[i] for a in actions]).to(device)
+            #     log_probs = F.log_softmax(head_logits, dim=1)
+            #     head_loss = -(target_probs * log_probs).sum(dim=1).mean() # standard AlphaZero-style soft target cross-entropy
+            #     policy_loss += head_loss
+
             for i in range(len(policy_logits)):
-                # head i output: shape (batch_size, 3)
-                # target i : (batch_size) -> the i-th integer of the action tuple
-                head_loss = F.cross_entropy(policy_logits[i], action_targets[:, i])
+                target_probs = torch.FloatTensor([pt[i] for pt in policy_targets]).to(device)
+                log_probs = F.log_softmax(policy_logits[i], dim=1)
+                head_loss = -(target_probs * log_probs).sum(dim=1).mean()
                 policy_loss += head_loss
+
+
             
             # combine losses
             loss = value_loss + policy_loss

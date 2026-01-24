@@ -46,6 +46,50 @@ class MCTSAgent:
         best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
         return best_action
     
+    # new search method with policy marginals
+    def search_with_policy(self, root_state):
+        root = TreeNode(root_state, prior=1.0)
+
+        # Expand root
+        self._evaluate_and_expand(root)
+
+        # Run simulations
+        for _ in range(self.n_simulations):
+            node = root
+            search_path = [node]
+
+            while not node.is_leaf():
+                action, node = self._select_child(node)
+                search_path.append(node)
+
+            value = self._evaluate_and_expand(node)
+            self._backpropagate(search_path, value)
+
+        # -------- existing behavior --------
+        best_action = max(
+            root.children.items(),
+            key=lambda item: item[1].visit_count
+        )[0]
+
+        # -------- NEW: compute marginals --------
+        n_heads = len(best_action)
+        visit_marginals = np.zeros((n_heads, 3), dtype=np.float32)
+
+        total_visits = sum(child.visit_count for child in root.children.values())
+
+        for action, child in root.children.items():
+            for i, a_i in enumerate(action):
+                idx = self.action_map.index(a_i)  # -1,0,1 → 0,1,2
+                visit_marginals[i, idx] += child.visit_count
+
+        # normalize
+        visit_marginals /= max(total_visits, 1)
+
+        # convert to list of arrays (one per head)
+        visit_marginals = [visit_marginals[i] for i in range(n_heads)]
+
+        return best_action, visit_marginals
+    
     def _select_child(self, node):
         """
         selects the child with the highest Upper Confidence Bound (UCB) score.
@@ -75,10 +119,10 @@ class MCTSAgent:
             # sparsity bonus
             # we add a small bonus if the action vector is sparse (i.e., has more zeros)
             # action is a tuple of 12 ints so count how many are 0.
-            zeros_count = action.count(0)
-            sparsity_bonus = 0.05 * (zeros_count / len(action))
+            # zeros_count = action.count(0)
+            # sparsity_bonus = 0.05 * (zeros_count / len(action))
 
-            score = q_value + u_value + sparsity_bonus
+            score = q_value + u_value  # + sparsity_bonus
 
             if score > best_score:
                 best_score = score
