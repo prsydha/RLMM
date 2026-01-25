@@ -172,7 +172,7 @@ class MCTSAgent:
         # Keep on GPU for efficiency
         probs = [torch.softmax(l / self.temperature, dim=1) for l in logits]
 
-        # Strategy 1: Sample from distribution (exploration)
+        # Strategy 1: Sample from distribution (exploration)    
         for _ in range(k):
             action_list = []
             for head_prob in probs:

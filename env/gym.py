@@ -273,8 +273,8 @@ class TensorDecompositionEnv(gym.Env):
             else:
                 # Reward shaping: encourage progress even without completion
                 progress = prev_norm - curr_norm
-                if progress > 0:
-                    reward += progress * 10.0  # Increased from 10.0
+                # if progress > 0:
+                reward += progress * 10.0  # Increased from 10.0
                 
                 # # Bonus for getting close to solution
                 # if curr_norm < 1.0:
