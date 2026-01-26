@@ -150,21 +150,39 @@ class MCTSAgent:
 
     def _sample_actions(self, logits, k=10):
         """
-        Constructs k valid actions by sampling from the factorized logits.
+        Samples k actions and calculates their joint probabilities.
+        Returns: List of tuples: [(action_tuple, joint_probability), ...]
         """
-        actions = []
-        # convert logits to probabilities using softmax
+        sampled_results = []
+        # convert logits to probabilities using softmax (shape: [batch=1, num_actions])
         probs = [torch.softmax(l, dim = 1) for l in logits]
 
+        # sample k independent actions
         for _ in range(k):
             action_list = []
+            joint_prob = 1.0
+
             for head_prob in probs:
-                # sample index based on probabilities
-                idx = torch.multinomial(head_prob, 1).item()
+                # head_prob shape: (1, n_actions)
+                # sample 1 index based on probability distribution
+                idx_tensor = torch.multinomial(head_prob, 1)
+                idx = idx_tensor.item()
+
+                # Get the actual probability of choosing this specific index
+                prob_of_idx = head_prob[0, idx].item()
+
+                # map index to action value (-1, 0, 1)
                 val = self.action_map[idx]
+
                 action_list.append(val)
-            actions.append(tuple(action_list))
-        return list(set(actions)) # return unique actions only
+                joint_prob *= prob_of_idx # product of probabilities for joint distribution
+
+            sampled_results.append((tuple(action_list), joint_prob))
+
+        # deduplication scheme: take the first occurrence
+        # here we just use a dict to keep unique actions and their most recent probability
+        unique_actions = {act: prob for act, prob in sampled_results}
+        return unique_actions.items()
         
     def _parse_action(self, action_tuple):
         # Convert tuple of 12 ints to u, v, w arrays
