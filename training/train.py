@@ -7,7 +7,6 @@ import torch.optim as optim
 import torch.nn.functional as F
 import random
 from collections import deque
-import time
 import subprocess
 
 # Run benchmark visualization automatically
@@ -25,6 +24,7 @@ from agent.mcts_agent import MCTSAgent
 from models.pv_network import PolicyValueNet
 from project.logger import init_logger, log_metrics
 import config as project_config
+from utils.warm_start import generate_demo_data
 # from mlo.checkpoint import save_checkpoint
 
 # --- Hyperparameters ---
@@ -97,6 +97,71 @@ def train():
     # Replay Buffer: Stores (state, mcts_probs, winner)
     replay_buffer = deque(maxlen=REPLAY_BUFFER_SIZE) # use deque for efficient pops from left(front)
 
+    # Warm Start with Demo Data
+    # inject the solution 50 times so the buffer is full of "winning" examples
+    demo_data = generate_demo_data(env)
+    for _ in range(50):
+        replay_buffer.extend(demo_data)
+
+    print(f"Replay Buffer initialized with {len(replay_buffer)} expert samples.")
+
+    # pre-train the network on this data before starting MCTS
+    print("Pre-training Network on expert data...")
+    net.train()
+    for step in range(100): # 100 gradient steps
+        # copying the main training loop below
+        batch = random.sample(replay_buffer, BATCH_SIZE)
+        states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
+
+        # prepare tensors
+        states_tensor = torch.FloatTensor(np.array(states)).to(device) # shape (BATCH_SIZE, state_dim) # pytorch converts numpy array to tensor faster and more reliably than raw Python lists            
+        values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device) # shape (BATCH_SIZE, 1)
+
+        # targets_batch is shape(BATCH_SIZE, n_heads, 3)            
+        targets_batch = torch.stack(list(target_dists)).to(device)
+
+        # forward pass
+        policy_logits, value_pred = net(states_tensor)
+
+        # We need to train the network on two losses:
+        # Policy Loss: The network's "intuition" (probabilities) should match the "reality" (MCTS visit counts).
+        # Value Loss: The network's predicted score should match the final result (Solved/Not Solved).
+        
+        # 1. Value Loss (MSE) : did we predict the win/loss correctly?
+        value_loss = F.mse_loss(value_pred, values_tensor) # functional mse loss
+
+        # 2. Policy Loss (cross-entropy) : did we pick the right integers?
+        # we must split the 'actions' tuple (batch of 12/27 ints) into separate targets for each head
+        # actions is a list of tuples: [(1, 0, -1, ...), (...), ...]
+        # convert to tensor : (batch_size, 12/27)
+        # action_targets = torch.LongTensor(actions).to(device) # LongTensor for integer targets
+        # # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
+        # action_targets = action_targets + 1
+
+        # policy loss with soft targets (KL Divergence)
+        # we treat each head independently
+        policy_loss = 0
+
+        for i in range(len(policy_logits)):
+            # network output: Logits -> LogSoftmax for KLDiv, shape: (batch_size, 3)
+            pred_log_probs = F.log_softmax(policy_logits[i], dim=1)
+
+            # target : probability distribution
+            # shape : (batch_size, 3)
+            target_probs = targets_batch[:, i, :]
+
+            # KLDivLoss(input = log_probs, target = probs)
+            # "batchmean" sums over classes and averages over batch
+            policy_loss += F.kl_div(pred_log_probs, target_probs, reduction='batchmean')
+        
+        # combine losses
+        loss = value_loss + policy_loss
+
+        optimizer.zero_grad() # clear previous gradients becuase by default, PyTorch accumulates gradients
+        loss.backward()       # backpropagate to compute gradients
+        optimizer.step()      # update weights
+        
+
     # --------------------
     # 2. Main Training Loop
     # --------------------
@@ -140,7 +205,7 @@ def train():
                 marginal_targets = compute_marginal_targets(visit_counts, n_heads=project_config.N_HEADS)
 
                 # store data : (state, targets, result_placeholder)
-                episode_data.append([obs.flatten(), marginal_targets, 0])
+                episode_data.append([obs.flatten(), marginal_targets])
 
                 obs = next_obs
                 steps += 1
