@@ -58,7 +58,7 @@ class TensorDecompositionEnv(gym.Env):
             matrix_size: Tuple[int, int, int] = (2, 2, 2),
             max_rank: int = 20,
             reward_type: str = "sparse",
-            illegal_action_penalty: float = -2.0,
+            illegal_action_penalty: float = -1.0,
     ):
         """
         Initialize the tensor decomposition environment.
@@ -93,16 +93,23 @@ class TensorDecompositionEnv(gym.Env):
         self.best_rank = max_rank
 
         # Action space: Choose u, v, w vectors for rank-1 tensor u⊗v⊗w
-        # Each vector has entries in {-1, 0, 1} (allows linear combinations)
-        # Total actions = (3^m) * (3^n) * (3^p)
-        # For 2×2×2: 3^2 * 3^2 * 3^2 = 729 possible actions
+        # Each vector has entries in {-2, -1, 0, 1, 2} (allows linear combinations)
+        # Total actions = (5^m) * (5^n) * (5^p)
+        # For 2×2×2: 5^2 * 5^2 * 5^2 = 15,625 possible actions
+
+        # Simplified action space: discretized choices
+        self.action_space_size = (5 ** (self.m*self.n)) * (5 ** (self.n*self.p)) * (5 ** (self.m*self.p))
+        self.action_space = spaces.Discrete(self.action_space_size) # this tells gym the possible set of actions
+        # ... represented as integers. Gym env are expected to have action_space attribute.
+        # the action integer is later decoded into uvw in _action_to_rank1_tensor().
+        # ... Gym now knows, valid actions are from 0 to self.action_space_size-1 from above line of code
 
         # Observation space: flattened residual tensor + metadata
         # Residual tensor: m×n×p values
         # Metadata: [current_step, num_rank1_used, residual_norm]. current_step >= num_rank1_used because steps may be invalid.
-        obs_size = (self.m*self.n) * (self.n*self.p) * (self.m*self.p) # length of tensor the agent sees at each step
+        obs_size = (self.m*self.n) * (self.n*self.p) * (self.m*self.p) + 3 # length of vector the agent sees at each step
         self.observation_space = spaces.Box( # continuous because norms and rank1 tensors are considered to be continuous
-            low=-100.0, # -100 to 100 because resulting rank1 3d tensor from uvw can take large values too
+            low=-100.0, # -100 to 100 because resulting rank1 3d tensor from uvw can take large values too (see example in internet)
             high=100.0,
             shape=(obs_size,),
             dtype=np.float32
@@ -232,68 +239,46 @@ class TensorDecompositionEnv(gym.Env):
         if self.reward_type == "dense":
             # Dense reward: progress toward zero residual
             progress = prev_norm - curr_norm
-            reward = progress * 10.0  # Scale progress
+            reward = progress   # Direct progress (previously * 5.0)
 
             # Bonus for completion
             if decomposition_complete:
-                # Reward based on efficiency (fewer rank-1 tensors = better)
-                efficiency_bonus = (self.max_rank - len(self.algorithm)) * 10.0
-                reward += 10.0 + efficiency_bonus
-
-                # Extra bonus if we beat the naive algorithm
-                naive_rank = self.m * self.n * self.p # 8 for 2x2 matmul
-                if len(self.algorithm) < naive_rank:
-                    reward += 10.0
+                # Reward based on efficiency
+                # Base is 1.0, plus bonus for fewer steps
+                efficiency = (self.max_rank - len(self.algorithm)) / self.max_rank
+                reward += 1.0 + efficiency
 
                 # Track best
                 if len(self.algorithm) < self.best_rank:
                     self.best_rank = len(self.algorithm)
-                    reward += 10.0
+                    reward += 1.0  # New best!
 
-            # Penalty for not making progress
-            if progress <= 0:
-                reward -= 1
+            # Small penalty for time step
+            reward -= 0.01
 
-        else:  # sparse reward with shaping
+        else:  # sparse reward
             if decomposition_complete:
                 # Only reward on completion
-                base_reward = 100.0
+                base_reward = 1.0
 
                 # Efficiency bonus
                 naive_rank = self.m * self.n * self.p
                 efficiency = (naive_rank - len(self.algorithm)) / naive_rank
-                reward = base_reward + efficiency * 50.0
+                reward = base_reward + efficiency
 
                 # Track best
                 if len(self.algorithm) < self.best_rank:
                     self.best_rank = len(self.algorithm)
-                    reward += 50.0
+                    reward += 1.0
             else:
-                # Critical: Strongly reward REDUCING residual, strongly penalize INCREASING it
-                progress = prev_norm - curr_norm
-                
-                if progress > 0:
-                    # Good! We reduced the residual
-                    reward = progress * 100.0  # Strong positive reward (10x increase)
-                    
-                    # Extra bonuses for getting close to solution
-                    if curr_norm < 1.0:
-                        reward += 20.0
-                    if curr_norm < 0.5:
-                        reward += 30.0
-                    if curr_norm < 0.1:
-                        reward += 50.0
-                elif progress < 0:
-                    # Bad! We increased the residual - strong penalty
-                    reward = progress * 100.0  # Strong negative (progress is negative)
-                    reward -= 5.0  # Extra penalty for wrong direction
-                else:
-                    # No change in residual - small penalty
-                    reward = -1.0
-                
-                # Small step penalty to encourage efficiency
-                reward -= 0.1
+                # Small penalty for each step to encourage efficiency
+                reward = -0.01
 
+                # progress = prev_norm - curr_norm
+                # Penalize large residual, but scaled down
+                reward -= (curr_norm / 100.0)
+
+        return reward
         return reward
 
     def reset(
