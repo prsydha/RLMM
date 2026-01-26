@@ -24,6 +24,7 @@ from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
 from models.pv_network import PolicyValueNet
 from project.logger import init_logger, log_metrics
+import config as project_config
 # from mlo.checkpoint import save_checkpoint
 
 # --- Hyperparameters ---
@@ -47,6 +48,41 @@ config = {
     "checkpoint_interval": 20,
     "device": "cuda" if torch.cuda.is_available() else "cpu"
 }
+
+def compute_marginal_targets(visit_counts, n_heads=12, action_map=[-1, 0, 1]):
+    """
+    Converts MCTS tuple visits into marginal probability targets for each head.
+    
+    Args:
+        visit_counts: Dict { (1, 0, -1...): 50, (0, 0, 1...): 20 }
+    Returns:
+        targets: Tensor of shape (n_heads, 3) containing probabilities.
+    """
+    # 1. calculate total visits to normalize
+    total_visits = sum(visit_counts.values())
+    if total_visits == 0:
+        return torch.zeros(n_heads, 3)
+    
+    # 2. intialize targets(Heads x Actions)
+    # actions are indices 0,1,2 corresponding to -1,0,1
+    # shape (n_heads, 3)
+    targets = torch.zeros(n_heads, len(action_map))
+
+    # 3. aggregrate
+    for action_tuple, count in visit_counts.items():
+        prob = count / total_visits
+
+        # for each scalar decision in the tuple
+        for head_idx, action in enumerate(action_tuple):
+            # map value (-1,0,1) to index (0,1,2)
+            # assuming action_map is sorted as [-1,0,1]
+            action_idx = action_map.index(action)
+
+            # add probability mass to this choice
+            targets[head_idx, action_idx] += prob # add to the corresponding head and action index
+
+        return targets
+
 
 def train():
     # 1. setup
@@ -88,13 +124,7 @@ def train():
             while not done:
                 # run MCTS to get the best action distribution
                 # we need MCTS to return action probabilities, not just the best move
-                # we'll peek into the root node of the MCTS after search
-                best_action, visit_marginals = mcts.search_with_policy(obs)
-            
-                # extract visit counts from Root -> Policy target
-                # we need to map visit counts to the output heads
-                # for simplicity, we train on the chosen action only
-                # ideally, we would train on the full distribution vector
+                best_action, visit_counts = mcts.search(obs, return_probs=True)
 
                 # execute move (environment step)
                 u, v, w = mcts._parse_action(best_action)
@@ -106,8 +136,11 @@ def train():
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
 
-                # store data : (state, action_tuple, result_placeholder)
-                episode_data.append([obs.flatten(), visit_marginals])
+                # compute visit marginals for training target
+                marginal_targets = compute_marginal_targets(visit_counts, n_heads=project_config.N_HEADS)
+
+                # store data : (state, targets, result_placeholder)
+                episode_data.append([obs.flatten(), marginal_targets, 0])
 
                 obs = next_obs
                 steps += 1
@@ -177,11 +210,14 @@ def train():
         total_loss = 0
         for _ in range(10): # 10 gradient steps per epoch
             batch = random.sample(replay_buffer, BATCH_SIZE)
-            states, policy_targets, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists
+            states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
 
             # prepare tensors
             states_tensor = torch.FloatTensor(np.array(states)).to(device) # shape (BATCH_SIZE, state_dim) # pytorch converts numpy array to tensor faster and more reliably than raw Python lists
             values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device) # shape (BATCH_SIZE, 1)
+
+            # targets_batch is shape(BATCH_SIZE, n_heads, 3)
+            targets_batch = torch.stack(list(target_dists)).to(device)
 
             # forward pass
             policy_logits, value_pred = net(states_tensor)
@@ -201,29 +237,21 @@ def train():
             # # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
             # action_targets = action_targets + 1
 
-            # policy loss with soft targets
+            # policy loss with soft targets (KL Divergence)
+            # we treat each head independently
             policy_loss = 0
-            # iterate over each head
-            # for i, head_logits in enumerate(policy_logits):
-            #     # head_logits : (B, n_actions)
-            #     # target_probs : (B, n_actions)
-            #     # target i : (batch_size) -> the i-th integer of the action tuple
-
-            #     # head_loss = F.cross_entropy(policy_logits[i], action_targets[:, i])
-            #     # policy_loss += head_loss
-
-            #     target_probs = torch.FloatTensor([a[i] for a in actions]).to(device)
-            #     log_probs = F.log_softmax(head_logits, dim=1)
-            #     head_loss = -(target_probs * log_probs).sum(dim=1).mean() # standard AlphaZero-style soft target cross-entropy
-            #     policy_loss += head_loss
 
             for i in range(len(policy_logits)):
-                target_probs = torch.FloatTensor([pt[i] for pt in policy_targets]).to(device)
-                log_probs = F.log_softmax(policy_logits[i], dim=1)
-                head_loss = -(target_probs * log_probs).sum(dim=1).mean()
-                policy_loss += head_loss
+                # network output: Logits -> LogSoftmax for KLDiv, shape: (batch_size, 3)
+                pred_log_probs = F.log_softmax(policy_logits[i], dim=1)
 
+                # target : probability distribution
+                # shape : (batch_size, 3)
+                target_probs = targets_batch[:, i, :]
 
+                # KLDivLoss(input = log_probs, target = probs)
+                # "batchmean" sums over classes and averages over batch
+                policy_loss += F.kl_div(pred_log_probs, target_probs, reduction='batchmean')
             
             # combine losses
             loss = value_loss + policy_loss

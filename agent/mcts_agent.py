@@ -12,10 +12,10 @@ class MCTSAgent:
         self.device = device
         self.action_map = [-1, 0, 1]
 
-    def search(self, root_state):
+    def search(self, root_state, return_probs=False):
         """
         runs MCTS simulations starting from the current state.
-        returns the best action found.
+        If return_probs is True, returns (best_action, visit_distribution_map).
         """
         root = TreeNode(root_state, prior=1.0)
 
@@ -37,58 +37,19 @@ class MCTSAgent:
             # otherwise, use the neural network to evaluate
             value = self._evaluate_and_expand(node)
 
-
             # C. Backpropagation
             self._backpropagate(search_path, value)
         
         # 3. select best move (greedy with respect to visit count)
         # return the action with the most visits
         best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
+
+        if return_probs:
+            # return a dictionary: {action_tuple: visit_count}
+            # this represnts the full "posterior" distribution found by MCTS
+            visit_counts = {action: child.visit_count for action, child in root.children.items()}
+            return best_action, visit_counts
         return best_action
-    
-    # new search method with policy marginals
-    def search_with_policy(self, root_state):
-        root = TreeNode(root_state, prior=1.0)
-
-        # Expand root
-        self._evaluate_and_expand(root)
-
-        # Run simulations
-        for _ in range(self.n_simulations):
-            node = root
-            search_path = [node]
-
-            while not node.is_leaf():
-                action, node = self._select_child(node)
-                search_path.append(node)
-
-            value = self._evaluate_and_expand(node)
-            self._backpropagate(search_path, value)
-
-        # -------- existing behavior --------
-        best_action = max(
-            root.children.items(),
-            key=lambda item: item[1].visit_count
-        )[0]
-
-        # -------- NEW: compute marginals --------
-        n_heads = len(best_action)
-        visit_marginals = np.zeros((n_heads, 3), dtype=np.float32)
-
-        total_visits = sum(child.visit_count for child in root.children.values())
-
-        for action, child in root.children.items():
-            for i, a_i in enumerate(action):
-                idx = self.action_map.index(a_i)  # -1,0,1 → 0,1,2
-                visit_marginals[i, idx] += child.visit_count
-
-        # normalize
-        visit_marginals /= max(total_visits, 1)
-
-        # convert to list of arrays (one per head)
-        visit_marginals = [visit_marginals[i] for i in range(n_heads)]
-
-        return best_action, visit_marginals
     
     def _select_child(self, node):
         """
