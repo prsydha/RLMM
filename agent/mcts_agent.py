@@ -4,15 +4,16 @@ import math
 from utils.tree_node import TreeNode
 
 class MCTSAgent:
-    def __init__(self, model, env, n_simulations=50, cpuct=1.0, device='cpu'):
+    def __init__(self, model, env, n_simulations=50, cpuct=1.0, device='cpu', temperature=1.0):
         self.model = model
         self.env = env # copy of the environment for simulations
         self.n_simulations = n_simulations
         self.cpuct = cpuct # exploration constant
         self.device = device
+        self.temperature = temperature
         self.action_map = [-1, 0, 1]
 
-    def search(self, root_state, return_probs=False):
+    def search(self, root_state, add_noise=True):
         """
         runs MCTS simulations starting from the current state.
         If return_probs is True, returns (best_action, visit_distribution_map).
@@ -21,6 +22,13 @@ class MCTSAgent:
 
         # 1. expansion of root node (initialize root)
         self._evaluate_and_expand(root)
+        
+        # Add Dirichlet noise to root for exploration (AlphaZero technique)
+        if add_noise and len(root.children) > 0:
+            actions = list(root.children.keys())
+            noise = np.random.dirichlet([0.3] * len(actions))
+            for i, action in enumerate(actions):
+                root.children[action].prior = 0.75 * root.children[action].prior + 0.25 * noise[i]
 
         # 2. simulation loop
         for _ in range(self.n_simulations):
@@ -40,15 +48,20 @@ class MCTSAgent:
             # C. Backpropagation
             self._backpropagate(search_path, value)
         
-        # 3. select best move (greedy with respect to visit count)
-        # return the action with the most visits
-        best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
-
-        if return_probs:
-            # return a dictionary: {action_tuple: visit_count}
-            # this represnts the full "posterior" distribution found by MCTS
-            visit_counts = {action: child.visit_count for action, child in root.children.items()}
-            return best_action, visit_counts
+        # 3. select best move with temperature-based sampling
+        if self.temperature < 0.01:
+            # Greedy: select most visited
+            best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
+        else:
+            # Sample based on visit counts with temperature
+            actions = list(root.children.keys())
+            visits = np.array([root.children[a].visit_count for a in actions])
+            # Apply temperature
+            visits_temp = visits ** (1.0 / self.temperature)
+            probs = visits_temp / visits_temp.sum()
+            # Sample an index, then get the action
+            action_idx = np.random.choice(len(actions), p=probs)
+            best_action = actions[action_idx]
         return best_action
     
     def _select_child(self, node):
@@ -100,14 +113,16 @@ class MCTSAgent:
         uses the neural network to evaluate the node and expand it.
         returns the value of the node.
         """
-
-        # check if node is terminal
-        if hasattr(node, 'is_terminal') and node.is_terminal:
-            return node.value_sum / max(1, node.visit_count) # return stored value
-        
          # prepare state for network
-         # standard "Dense" (linear) layers in neural networks expect a flat vector as input
-        state_tensor = torch.FloatTensor(node.state.flatten()).unsqueeze(0).to(self.device) # flatten the multidim array, convert to a PyTorch tensor with high-precision decimals to calculate gradients, add fake batch dimension, move to device( gpu or cpu)
+         # Optimize: reuse tensor creation to minimize CPU-GPU transfers
+        state_flat = node.state.flatten()
+        
+        # Check if already a tensor on correct device
+        if isinstance(state_flat, torch.Tensor):
+            state_tensor = state_flat.unsqueeze(0)
+        else:
+            # Create tensor directly on device (faster than .to(device))
+            state_tensor = torch.tensor(state_flat, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         with torch.no_grad(): # disable gradient calculation for inference
             policy_logits, value = self.model(state_tensor)
@@ -122,8 +137,9 @@ class MCTSAgent:
             return 1.0 # solved!
         
         # expansion: we cannot add all possible actions due to combinatorial explosion
-        # so we sample the K most probable actions from the policy head
-        top_k_actions = self._sample_actions(policy_logits, k=10)
+        # so we sample the top K most probable actions from the policy head
+        # Increase k for better exploration, especially early in training
+        top_k_actions = self._sample_actions(policy_logits, k=30)
 
         # instantiate child nodes for each action
         for action, action_prob in top_k_actions:
@@ -155,41 +171,58 @@ class MCTSAgent:
             # for single-player optimization, value stays positive
     
 
-    def _sample_actions(self, logits, k=10):
+    def _sample_actions(self, logits, k=30):
         """
-        Samples k actions and calculates their joint probabilities.
-        Returns: List of tuples: [(action_tuple, joint_probability), ...]
+        Constructs k valid actions by sampling from the factorized logits.
+        Ensures diversity by mixing sampling strategies.
+        Uses heuristics to prefer sparse actions.
         """
-        sampled_results = []
-        # convert logits to probabilities using softmax (shape: [batch=1, num_actions])
-        probs = [torch.softmax(l, dim = 1) for l in logits]
+        actions = set()
+        # convert logits to probabilities using softmax with temperature
+        probs = [torch.softmax(l / self.temperature, dim=1) for l in logits]
 
-        # sample k independent actions
+        # Strategy 1: Sample from distribution (exploration)    
         for _ in range(k):
             action_list = []
             joint_prob = 1.0
 
             for head_prob in probs:
-                # head_prob shape: (1, n_actions)
-                # sample 1 index based on probability distribution
-                idx_tensor = torch.multinomial(head_prob, 1)
-                idx = idx_tensor.item()
-
-                # Get the actual probability of choosing this specific index
-                prob_of_idx = head_prob[0, idx].item()
-
-                # map index to action value (-1, 0, 1)
+                # sample index based on probabilities (happens on GPU)
+                idx = torch.multinomial(head_prob, 1).item()
                 val = self.action_map[idx]
 
                 action_list.append(val)
-                joint_prob *= prob_of_idx # product of probabilities for joint distribution
-
-            sampled_results.append((tuple(action_list), joint_prob))
-
-        # deduplication scheme: take the first occurrence
-        # here we just use a dict to keep unique actions and their most recent probability
-        unique_actions = {act: prob for act, prob in sampled_results}
-        return unique_actions.items()
+            actions.add(tuple(action_list))
+        
+        # Strategy 2: Add some greedy actions (exploitation) - use GPU
+        for _ in range(k // 3):
+            action_list = []
+            for head_prob in probs:
+                idx = torch.argmax(head_prob, dim=1).item()
+                val = self.action_map[idx]
+                action_list.append(val)
+            actions.add(tuple(action_list))
+        
+        # Strategy 3: Add random exploration with bias toward non-zero
+        for _ in range(k // 4):
+            action_list = []
+            for _ in range(len(logits)):
+                val = np.random.choice(self.action_map, p=[0.4, 0.2, 0.4])
+                action_list.append(val)
+            actions.add(tuple(action_list))
+        
+        # Strategy 4: Heuristic sparse actions (one-hot and two-hot patterns)
+        # These are more likely to reduce residual effectively
+        for _ in range(k // 4):
+            action_list = [0] * len(logits)
+            # Randomly set 1-3 positions to non-zero
+            num_nonzero = np.random.choice([1, 2, 3], p=[0.5, 0.35, 0.15])
+            positions = np.random.choice(len(logits), size=num_nonzero, replace=False)
+            for pos in positions:
+                action_list[pos] = np.random.choice([-1, 1])
+            actions.add(tuple(action_list))
+            
+        return list(actions)
         
     def _parse_action(self, action_tuple):
         # Convert tuple of 12 ints to u, v, w arrays
