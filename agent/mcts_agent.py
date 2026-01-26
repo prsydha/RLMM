@@ -64,7 +64,10 @@ class MCTSAgent:
             # "quality" value : "Based on my actual experience so far, how much do I like this move?"
             # Q(s,a)=∑V/N(s,a)​
             # Experience / Success
-            q_value = child.value()
+            if child.visit_count > 0:
+                q_value = child.value_sum / child.visit_count
+            else:
+                q_value = 0.0
 
             # the u-value : Upper confidence bound value
             # represents how much 'potential' or 'uncertainty' there is about this move
@@ -97,8 +100,12 @@ class MCTSAgent:
         uses the neural network to evaluate the node and expand it.
         returns the value of the node.
         """
-         # prepare state for network
 
+        # check if node is terminal
+        if hasattr(node, 'is_terminal') and node.is_terminal:
+            return node.value_sum / max(1, node.visit_count) # return stored value
+        
+         # prepare state for network
          # standard "Dense" (linear) layers in neural networks expect a flat vector as input
         state_tensor = torch.FloatTensor(node.state.flatten()).unsqueeze(0).to(self.device) # flatten the multidim array, convert to a PyTorch tensor with high-precision decimals to calculate gradients, add fake batch dimension, move to device( gpu or cpu)
 
@@ -111,14 +118,15 @@ class MCTSAgent:
         # in a real run, we might simulate 1 step of environment here
         norm = np.linalg.norm(node.state)
         if norm < 1e-5:
+            node.is_terminal = True # mark as terminal to avoid re-evaluation
             return 1.0 # solved!
         
         # expansion: we cannot add all possible actions due to combinatorial explosion
-        # so we sample the top K most probable actions from the policy head
+        # so we sample the K most probable actions from the policy head
         top_k_actions = self._sample_actions(policy_logits, k=10)
 
         # instantiate child nodes for each action
-        for action in top_k_actions:
+        for action, action_prob in top_k_actions:
             if action not in node.children:
                 # calculate the next state (residual)
                 u, v, w = self._parse_action(action)
@@ -129,9 +137,8 @@ class MCTSAgent:
                 next_state = node.state - update
 
                 # create child node with prior probability from policy head
-                # Prior is product of probabilities from the 12 heads? 
-                # Roughly, we can just assign uniform or derived prior.
-                child = TreeNode(next_state, parent=node, prior=1.0/len(top_k_actions))  ####### to be refined 
+                # Prior is product of probabilities from the 12 heads (joint distribution)
+                child = TreeNode(next_state, parent=node, prior=action_prob)  # refined
                 node.children[action] = child
                 
         return value
