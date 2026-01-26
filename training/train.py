@@ -125,7 +125,10 @@ def train():
 
         for episode in range(EPISODES_PER_EPOCH):
             obs, info = env.reset()
-            mcts = MCTSAgent(model = net, env = env, n_simulations=MCTS_SIMS, device=device, temperature=temperature)
+            # Progressive MCTS: start with fewer simulations, increase over time
+            current_sims = int(MCTS_SIMS * (0.5 + 0.5 * (epoch / EPOCHS)))
+            current_sims = max(25, min(current_sims, MCTS_SIMS))
+            mcts = MCTSAgent(model = net, env = env, n_simulations=current_sims, device=device, temperature=temperature)
 
             episode_data = [] # Stores (state, action_dist) for this game
             steps = 0
@@ -139,15 +142,25 @@ def train():
                 # Early exploration: use random actions sometimes
                 epsilon = max(0.05, 0.5 - (epoch / EPOCHS) * 0.45)
                 if np.random.random() < epsilon:
-                    # Random action with bias toward non-zero values
-                    u = np.random.choice([-1, 0, 1], size=4, p=[0.4, 0.2, 0.4])
-                    v = np.random.choice([-1, 0, 1], size=4, p=[0.4, 0.2, 0.4])
-                    w = np.random.choice([-1, 0, 1], size=4, p=[0.4, 0.2, 0.4])
+                    # Heuristic: prefer sparse actions (1-3 non-zero per vector)
+                    def sparse_vector(size):
+                        vec = np.zeros(size, dtype=int)
+                        num_nonzero = np.random.choice([1, 2, 3], p=[0.5, 0.3, 0.2])
+                        positions = np.random.choice(size, size=min(num_nonzero, size), replace=False)
+                        for pos in positions:
+                            vec[pos] = np.random.choice([-1, 1])
+                        return vec
+                    
+                    u = sparse_vector(4)
+                    v = sparse_vector(4)
+                    w = sparse_vector(4)
                     action = {'u': u, 'v': v, 'w': w}
                     best_action = tuple(list(u) + list(v) + list(w))
                 else:
                     # run MCTS to get the best action distribution
-                    best_action = mcts.search(obs)
+                    # Add noise for exploration in early epochs
+                    add_noise = epoch < EPOCHS // 2
+                    best_action = mcts.search(obs, add_noise=add_noise)
                     u, v, w = mcts._parse_action(best_action)
                     action = {'u': u, 'v': v, 'w': w}
                 next_obs, reward, terminated, truncated, info = env.step(action)
@@ -185,14 +198,15 @@ def train():
                 "action": action
                 }, step=global_step)
 
-                print(
-                f"Episode {episode:03d} | "
-                f"Reward: {reward:7.2f} | "
-                f"Rank: {info['rank_used']} | "
-                f"Residual: {info['residual_norm']:.4e} | "
-                f"Steps: {steps} | "
-                f"Valid: {info['action_valid']}"
-                )
+                # Only print every 5th step to reduce clutter
+                if steps % 5 == 0 or done:
+                    print(
+                    f"Ep {episode:03d} | "
+                    f"R: {reward:6.1f} | "
+                    f"Rank: {info['rank_used']} | "
+                    f"Norm: {info['residual_norm']:.2e} | "
+                    f"Step: {steps}"
+                    )
 
 
                         # Broadcast to visualizer
@@ -313,13 +327,17 @@ def train():
             # combine losses
             loss = value_loss + policy_loss
 
-            optimizer.zero_grad() # clear previous gradients becuase by default, PyTorch accumulates gradients
+            optimizer.zero_grad() # clear previous gradients
             loss.backward()       # backpropagate to compute gradients
             
-            # Gradient clipping for stability
-            torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
+            # Gradient clipping for stability and track gradient norms
+            grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
             
             optimizer.step()      # update weights
+            
+            # Track if gradients are vanishing/exploding
+            if _ == 0:  # Only for first batch per epoch
+                total_grad_norm = grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm
 
             total_loss += loss.item() # accumulate loss for logging
             total_value_loss += value_loss.item()

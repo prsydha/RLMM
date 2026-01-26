@@ -13,7 +13,7 @@ class MCTSAgent:
         self.temperature = temperature
         self.action_map = [-1, 0, 1]
 
-    def search(self, root_state):
+    def search(self, root_state, add_noise=True):
         """
         runs MCTS simulations starting from the current state.
         returns the best action found.
@@ -22,6 +22,13 @@ class MCTSAgent:
 
         # 1. expansion of root node (initialize root)
         self._evaluate_and_expand(root)
+        
+        # Add Dirichlet noise to root for exploration (AlphaZero technique)
+        if add_noise and len(root.children) > 0:
+            actions = list(root.children.keys())
+            noise = np.random.dirichlet([0.3] * len(actions))
+            for i, action in enumerate(actions):
+                root.children[action].prior = 0.75 * root.children[action].prior + 0.25 * noise[i]
 
         # 2. simulation loop
         for _ in range(self.n_simulations):
@@ -166,10 +173,10 @@ class MCTSAgent:
         """
         Constructs k valid actions by sampling from the factorized logits.
         Ensures diversity by mixing sampling strategies.
+        Uses heuristics to prefer sparse actions.
         """
         actions = set()
         # convert logits to probabilities using softmax with temperature
-        # Keep on GPU for efficiency
         probs = [torch.softmax(l / self.temperature, dim=1) for l in logits]
 
         # Strategy 1: Sample from distribution (exploration)
@@ -191,13 +198,23 @@ class MCTSAgent:
                 action_list.append(val)
             actions.add(tuple(action_list))
         
-        # Strategy 3: Add random exploration with bias toward non-zero (CPU is fine for this)
-        for _ in range(k // 3):
+        # Strategy 3: Add random exploration with bias toward non-zero
+        for _ in range(k // 4):
             action_list = []
             for _ in range(len(logits)):
-                # Bias toward -1 and 1 (not all zeros)
                 val = np.random.choice(self.action_map, p=[0.4, 0.2, 0.4])
                 action_list.append(val)
+            actions.add(tuple(action_list))
+        
+        # Strategy 4: Heuristic sparse actions (one-hot and two-hot patterns)
+        # These are more likely to reduce residual effectively
+        for _ in range(k // 4):
+            action_list = [0] * len(logits)
+            # Randomly set 1-3 positions to non-zero
+            num_nonzero = np.random.choice([1, 2, 3], p=[0.5, 0.35, 0.15])
+            positions = np.random.choice(len(logits), size=num_nonzero, replace=False)
+            for pos in positions:
+                action_list[pos] = np.random.choice([-1, 1])
             actions.add(tuple(action_list))
             
         return list(actions)

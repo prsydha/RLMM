@@ -7,7 +7,8 @@ export default function ControlPanel({
   stats,
   bestMetrics,
   lastSuccess,
-  rewardHistory
+  rewardHistory,
+  residualHistory
   
 }) {
   return (
@@ -24,6 +25,19 @@ export default function ControlPanel({
         <div style={{ marginBottom: '10px' }}>
           <Sparkline data={rewardHistory} color={stats.reward > 0 ? '#43e97b' : '#ff6b6b'} height={80} />
         </div>
+      </div>
+
+      {/* Residual Graph */}
+      <div className="control-section">
+        <h3>Residual Norm</h3>
+        <div style={{ marginBottom: '10px' }}>
+          <Sparkline 
+            data={residualHistory || []} 
+            color={stats.residual < 1 ? '#43e97b' : '#ff6b6b'} 
+            height={80} 
+          />
+        </div>
+
       </div>
 
       {/* Sparsity & Time */}

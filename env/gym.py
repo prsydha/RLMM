@@ -185,21 +185,19 @@ class TensorDecompositionEnv(gym.Env):
     def _get_observation(self) -> np.ndarray:
         """
         Get current observation (state representation).
+        Normalize residual tensor for better learning.
 
         Returns:
-            Flattened observation: [residual_tensor (flattened), step, rank, norm]
+            Normalized residual tensor
         """
-
-        # Metadata
-        # metadata = np.array([
-        #     self.current_step / self.max_rank,  # Normalized steps completed
-        #     len(self.algorithm) / self.max_rank,  # Normalized rank used
-        #     np.linalg.norm(self.residual_tensor)  # Residual norm
-        # ], dtype=np.float32)
-
-        # Combine
-
-        return self.residual_tensor
+        # Normalize by initial target norm for stability
+        target_norm = np.linalg.norm(self.target_tensor)
+        if target_norm > 0:
+            normalized_residual = self.residual_tensor / target_norm
+        else:
+            normalized_residual = self.residual_tensor
+            
+        return normalized_residual.astype(np.float32)
 
     def _calculate_reward(
             self,
@@ -271,21 +269,30 @@ class TensorDecompositionEnv(gym.Env):
                     self.best_rank = len(self.algorithm)
                     reward += 50.0
             else:
-                # Reward shaping: encourage progress even without completion
+                # Critical: Strongly reward REDUCING residual, strongly penalize INCREASING it
                 progress = prev_norm - curr_norm
+                
                 if progress > 0:
-                    reward += progress * 10.0  # Increased from 10.0
+                    # Good! We reduced the residual
+                    reward = progress * 100.0  # Strong positive reward (10x increase)
+                    
+                    # Extra bonuses for getting close to solution
+                    if curr_norm < 1.0:
+                        reward += 20.0
+                    if curr_norm < 0.5:
+                        reward += 30.0
+                    if curr_norm < 0.1:
+                        reward += 50.0
+                elif progress < 0:
+                    # Bad! We increased the residual - strong penalty
+                    reward = progress * 100.0  # Strong negative (progress is negative)
+                    reward -= 5.0  # Extra penalty for wrong direction
+                else:
+                    # No change in residual - small penalty
+                    reward = -1.0
                 
-                # # Bonus for getting close to solution
-                # if curr_norm < 1.0:
-                #     reward += 5.0
-                # if curr_norm < 0.5:
-                #     reward += 10.0
-                # if curr_norm < 0.1:
-                #     reward += 20.0
-                
-                # Small penalty for each step to encourage efficiency
-                reward += -1.0
+                # Small step penalty to encourage efficiency
+                reward -= 0.1
 
         return reward
 

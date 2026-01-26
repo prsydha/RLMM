@@ -27,6 +27,7 @@ export default function App() {
   const [bestMetrics, setBestMetrics] = useState(null)
   const [lastSuccess, setLastSuccess] = useState(null)
   const [rewardHistory, setRewardHistory] = useState([])
+  const [residualHistory, setResidualHistory] = useState([])
 
   const addLog = useCallback((msg, type = 'info') => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 })
@@ -40,6 +41,14 @@ export default function App() {
     if (newStats.reward !== undefined) {
       setRewardHistory(prev => {
         const updated = [...prev, newStats.reward]
+        if (updated.length > 50) return updated.slice(-50)
+        return updated
+      })
+    }
+
+    if (newStats.residual !== undefined) {
+      setResidualHistory(prev => {
+        const updated = [...prev, newStats.residual]
         if (updated.length > 50) return updated.slice(-50)
         return updated
       })
@@ -108,6 +117,7 @@ export default function App() {
             bestMetrics={bestMetrics}
             lastSuccess={lastSuccess}
             rewardHistory={rewardHistory}
+            residualHistory={residualHistory}
           />
         </div>
       </div>
