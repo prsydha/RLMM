@@ -12,10 +12,10 @@ class MCTSAgent:
         self.device = device
         self.action_map = [-1, 0, 1]
 
-    def search(self, root_state):
+    def search(self, root_state, return_probs=False):
         """
         runs MCTS simulations starting from the current state.
-        returns the best action found.
+        If return_probs is True, returns (best_action, visit_distribution_map).
         """
         root = TreeNode(root_state, prior=1.0)
 
@@ -37,13 +37,18 @@ class MCTSAgent:
             # otherwise, use the neural network to evaluate
             value = self._evaluate_and_expand(node)
 
-
             # C. Backpropagation
             self._backpropagate(search_path, value)
         
         # 3. select best move (greedy with respect to visit count)
         # return the action with the most visits
         best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
+
+        if return_probs:
+            # return a dictionary: {action_tuple: visit_count}
+            # this represnts the full "posterior" distribution found by MCTS
+            visit_counts = {action: child.visit_count for action, child in root.children.items()}
+            return best_action, visit_counts
         return best_action
     
     def _select_child(self, node):
@@ -59,7 +64,10 @@ class MCTSAgent:
             # "quality" value : "Based on my actual experience so far, how much do I like this move?"
             # Q(s,a)=∑V/N(s,a)​
             # Experience / Success
-            q_value = child.value()
+            if child.visit_count > 0:
+                q_value = child.value_sum / child.visit_count
+            else:
+                q_value = 0.0
 
             # the u-value : Upper confidence bound value
             # represents how much 'potential' or 'uncertainty' there is about this move
@@ -75,10 +83,10 @@ class MCTSAgent:
             # sparsity bonus
             # we add a small bonus if the action vector is sparse (i.e., has more zeros)
             # action is a tuple of 12 ints so count how many are 0.
-            zeros_count = action.count(0)
-            sparsity_bonus = 0.05 * (zeros_count / len(action))
+            # zeros_count = action.count(0)
+            # sparsity_bonus = 0.05 * (zeros_count / len(action))
 
-            score = q_value + u_value + sparsity_bonus
+            score = q_value + u_value  # + sparsity_bonus
 
             if score > best_score:
                 best_score = score
@@ -92,8 +100,12 @@ class MCTSAgent:
         uses the neural network to evaluate the node and expand it.
         returns the value of the node.
         """
-         # prepare state for network
 
+        # check if node is terminal
+        if hasattr(node, 'is_terminal') and node.is_terminal:
+            return node.value_sum / max(1, node.visit_count) # return stored value
+        
+         # prepare state for network
          # standard "Dense" (linear) layers in neural networks expect a flat vector as input
         state_tensor = torch.FloatTensor(node.state.flatten()).unsqueeze(0).to(self.device) # flatten the multidim array, convert to a PyTorch tensor with high-precision decimals to calculate gradients, add fake batch dimension, move to device( gpu or cpu)
 
@@ -106,14 +118,15 @@ class MCTSAgent:
         # in a real run, we might simulate 1 step of environment here
         norm = np.linalg.norm(node.state)
         if norm < 1e-5:
+            node.is_terminal = True # mark as terminal to avoid re-evaluation
             return 1.0 # solved!
         
         # expansion: we cannot add all possible actions due to combinatorial explosion
-        # so we sample the top K most probable actions from the policy head
+        # so we sample the K most probable actions from the policy head
         top_k_actions = self._sample_actions(policy_logits, k=10)
 
         # instantiate child nodes for each action
-        for action in top_k_actions:
+        for action, action_prob in top_k_actions:
             if action not in node.children:
                 # calculate the next state (residual)
                 u, v, w = self._parse_action(action)
@@ -124,9 +137,8 @@ class MCTSAgent:
                 next_state = node.state - update
 
                 # create child node with prior probability from policy head
-                # Prior is product of probabilities from the 12 heads? 
-                # Roughly, we can just assign uniform or derived prior.
-                child = TreeNode(next_state, parent=node, prior=1.0/len(top_k_actions))  ####### to be refined 
+                # Prior is product of probabilities from the 12 heads (joint distribution)
+                child = TreeNode(next_state, parent=node, prior=action_prob)  # refined
                 node.children[action] = child
                 
         return value
@@ -145,21 +157,39 @@ class MCTSAgent:
 
     def _sample_actions(self, logits, k=10):
         """
-        Constructs k valid actions by sampling from the factorized logits.
+        Samples k actions and calculates their joint probabilities.
+        Returns: List of tuples: [(action_tuple, joint_probability), ...]
         """
-        actions = []
-        # convert logits to probabilities using softmax
+        sampled_results = []
+        # convert logits to probabilities using softmax (shape: [batch=1, num_actions])
         probs = [torch.softmax(l, dim = 1) for l in logits]
 
+        # sample k independent actions
         for _ in range(k):
             action_list = []
+            joint_prob = 1.0
+
             for head_prob in probs:
-                # sample index based on probabilities
-                idx = torch.multinomial(head_prob, 1).item()
+                # head_prob shape: (1, n_actions)
+                # sample 1 index based on probability distribution
+                idx_tensor = torch.multinomial(head_prob, 1)
+                idx = idx_tensor.item()
+
+                # Get the actual probability of choosing this specific index
+                prob_of_idx = head_prob[0, idx].item()
+
+                # map index to action value (-1, 0, 1)
                 val = self.action_map[idx]
+
                 action_list.append(val)
-            actions.append(tuple(action_list))
-        return list(set(actions)) # return unique actions only
+                joint_prob *= prob_of_idx # product of probabilities for joint distribution
+
+            sampled_results.append((tuple(action_list), joint_prob))
+
+        # deduplication scheme: take the first occurrence
+        # here we just use a dict to keep unique actions and their most recent probability
+        unique_actions = {act: prob for act, prob in sampled_results}
+        return unique_actions.items()
         
     def _parse_action(self, action_tuple):
         # Convert tuple of 12 ints to u, v, w arrays

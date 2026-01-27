@@ -27,6 +27,7 @@ class PolicyValueNet(nn.Module):
         self.fc3 = nn.Linear(hidden_dim, hidden_dim)
 
         # --- policy head ---
+        # we will be using a facorized policy with 12 independent heads
         # outputs logits for each of the 12 coefficients independently
         self.policy_heads = nn.ModuleList([
             nn.Linear(hidden_dim, n_actions) for _ in range(n_heads)
