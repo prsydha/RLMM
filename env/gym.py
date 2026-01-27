@@ -58,7 +58,7 @@ class TensorDecompositionEnv(gym.Env):
             matrix_size: Tuple[int, int, int] = (2, 2, 2),
             max_rank: int = 20,
             reward_type: str = "sparse",
-            illegal_action_penalty: float = -1.0,
+            illegal_action_penalty: float = -50.0,
     ):
         """
         Initialize the tensor decomposition environment.
