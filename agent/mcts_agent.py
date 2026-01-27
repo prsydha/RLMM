@@ -4,7 +4,7 @@ import math
 from utils.tree_node import TreeNode
 
 class MCTSAgent:
-    def __init__(self, model, env, n_simulations=50, cpuct=1.0, device='cpu'):
+    def __init__(self, model, env, n_simulations=100, cpuct=1.0, device='cpu'):
         self.model = model
         self.env = env # copy of the environment for simulations
         self.n_simulations = n_simulations
@@ -105,6 +105,13 @@ class MCTSAgent:
         if hasattr(node, 'is_terminal') and node.is_terminal:
             return node.value_sum / max(1, node.visit_count) # return stored value
         
+        # check if this state solves the environment
+        # in a real run, we might simulate 1 step of environment here
+        norm = np.linalg.norm(node.state)
+        if norm < 1e-5:
+            node.is_terminal = True # mark as terminal to avoid re-evaluation
+            return 1.0 # solved!
+        
          # prepare state for network
          # standard "Dense" (linear) layers in neural networks expect a flat vector as input
         state_tensor = torch.FloatTensor(node.state.flatten()).unsqueeze(0).to(self.device) # flatten the multidim array, convert to a PyTorch tensor with high-precision decimals to calculate gradients, add fake batch dimension, move to device( gpu or cpu)
@@ -113,13 +120,6 @@ class MCTSAgent:
             policy_logits, value = self.model(state_tensor)
 
         value = value.item() # get scalar value from tensor
-
-        # check if this state solves the environment
-        # in a real run, we might simulate 1 step of environment here
-        norm = np.linalg.norm(node.state)
-        if norm < 1e-5:
-            node.is_terminal = True # mark as terminal to avoid re-evaluation
-            return 1.0 # solved!
         
         # expansion: we cannot add all possible actions due to combinatorial explosion
         # so we sample the K most probable actions from the policy head
@@ -155,7 +155,7 @@ class MCTSAgent:
             # for single-player optimization, value stays positive
     
 
-    def _sample_actions(self, logits, k=10):
+    def _sample_actions(self, logits, k=15):
         """
         Samples k actions and calculates their joint probabilities.
         Returns: List of tuples: [(action_tuple, joint_probability), ...]
@@ -164,8 +164,14 @@ class MCTSAgent:
         # convert logits to probabilities using softmax (shape: [batch=1, num_actions])
         probs = [torch.softmax(l, dim = 1) for l in logits]
 
-        # sample k independent actions
-        for _ in range(k):
+        # Determine vector length (4 for 2x2, 9 for 3x3)
+        L = len(logits) // 3
+
+        attempts = 0
+        max_attempts = k * 10 # Safety break to prevent infinite loops
+
+        while len(sampled_results) < k and attempts < max_attempts:
+            attempts += 1
             action_list = []
             joint_prob = 1.0
 
@@ -184,10 +190,23 @@ class MCTSAgent:
                 action_list.append(val)
                 joint_prob *= prob_of_idx # product of probabilities for joint distribution
 
+            # split into u, v, w vectors
+            u = action_list[0:L]
+            v = action_list[L:2*L]
+            w = action_list[2*L:3*L]
+
+            # validation: ensure that u, v, w are not all zero vectors
+            is_u_zero = sum(abs(x) for x in u) == 0
+            is_v_zero = sum(abs(x) for x in v) == 0
+            is_w_zero = sum(abs(x) for x in w) == 0
+
+            if is_u_zero or is_v_zero or is_w_zero:
+                continue # Reject and try again
+            
             sampled_results.append((tuple(action_list), joint_prob))
 
         # deduplication scheme: take the first occurrence
-        # here we just use a dict to keep unique actions and their most recent probability
+        # here we just use a dict(keeps only unique keys) to keep unique actions and their most recent probability
         unique_actions = {act: prob for act, prob in sampled_results}
         return unique_actions.items()
         

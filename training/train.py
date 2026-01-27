@@ -33,20 +33,20 @@ BATCH_SIZE = 32
 REPLAY_BUFFER_SIZE = 5000
 EPOCHS = 100         # Total training loops
 EPISODES_PER_EPOCH = 10  # Self-play games per loop
-MCTS_SIMS = 50       # Search depth per move
+MCTS_SIMS = 300       # Search depth per move
 
 config = {
     "run_name": "alphatensor_mcts_v1",
     "matrix_size": (2, 2, 2),
-    "max_rank": 10,
+    "max_rank": 15,
     "learning rate": LEARNING_RATE,
     "batch_size": BATCH_SIZE,
     "replay_buffer_size": REPLAY_BUFFER_SIZE,
     "epochs": EPOCHS,
     "episodes_per_epoch": EPISODES_PER_EPOCH,
-    "mcts_simulations": 50,
+    "mcts_simulations": MCTS_SIMS,
     "checkpoint_interval": 20,
-    "device": "cuda" if torch.cuda.is_available() else "cpu"
+    "device": "cpu"#"cuda" if torch.cuda.is_available() else "cpu"
 }
 
 def compute_marginal_targets(visit_counts, n_heads=12, action_map=[-1, 0, 1]):
@@ -86,7 +86,7 @@ def compute_marginal_targets(visit_counts, n_heads=12, action_map=[-1, 0, 1]):
 
 def train():
     # 1. setup
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(config["device"])
     print(f"Training on device: {device}")
 
     # initialize Environment, Network and Optimizer
@@ -108,7 +108,7 @@ def train():
     # pre-train the network on this data before starting MCTS
     print("Pre-training Network on expert data...")
     net.train()
-    for step in range(100): # 100 gradient steps
+    for step in range(25): # 100 gradient steps
         # copying the main training loop below
         batch = random.sample(replay_buffer, BATCH_SIZE)
         states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
@@ -170,6 +170,9 @@ def train():
 
     global_step = 0
 
+    # initialzing MCTS agent outside epoch loop to retain learned tree structure
+    mcts = MCTSAgent(model = net, env = env, n_simulations=MCTS_SIMS, device=config["device"])
+
     for epoch in range(EPOCHS):
         print(f"\n--- Epoch {epoch+1}/{EPOCHS} ---")
 
@@ -178,7 +181,7 @@ def train():
 
         for episode in range(EPISODES_PER_EPOCH):
             obs, info = env.reset()
-            mcts = MCTSAgent(model = net, env = env, n_simulations=MCTS_SIMS, device=device)
+            # mcts = MCTSAgent(model = net, env = env, n_simulations=MCTS_SIMS, device=config["device"])
 
             episode_data = [] # Stores (state, action_dist) for this game
             steps = 0
