@@ -33,12 +33,12 @@ BATCH_SIZE = 32
 REPLAY_BUFFER_SIZE = 5000
 EPOCHS = 100         # Total training loops
 EPISODES_PER_EPOCH = 10  # Self-play games per loop
-MCTS_SIMS = 300       # Search depth per move
+MCTS_SIMS = 600       # Search depth per move
 
 config = {
     "run_name": "alphatensor_mcts_v1",
     "matrix_size": (2, 2, 2),
-    "max_rank": 15,
+    "max_rank": 10,
     "learning rate": LEARNING_RATE,
     "batch_size": BATCH_SIZE,
     "replay_buffer_size": REPLAY_BUFFER_SIZE,
@@ -91,7 +91,17 @@ def train():
 
     # initialize Environment, Network and Optimizer
     env = TensorDecompositionEnv(matrix_size=config["matrix_size"], max_rank=config["max_rank"])
+
     net = PolicyValueNet().to(device)
+    checkpoint_path = "checkpoints/latest_model.pth"
+
+    # Check if a saved model already exists
+    if os.path.exists(checkpoint_path):
+        print("Found existing checkpoint. Loading...")
+        net.load_state_dict(torch.load(checkpoint_path))
+    else:
+        print("No checkpoint found. Starting from scratch.")
+
     optimizer = optim.Adam(net.parameters(), lr=LEARNING_RATE)
 
     # Replay Buffer: Stores (state, mcts_probs, winner)
@@ -99,67 +109,67 @@ def train():
 
     # Warm Start with Demo Data
     # inject the solution 50 times so the buffer is full of "winning" examples
-    demo_data = generate_demo_data(env)
-    for _ in range(50):
-        replay_buffer.extend(demo_data)
+    # demo_data = generate_demo_data(env)
+    # for _ in range(50):
+    #     replay_buffer.extend(demo_data)
 
-    print(f"Replay Buffer initialized with {len(replay_buffer)} expert samples.")
+    # print(f"Replay Buffer initialized with {len(replay_buffer)} expert samples.")
 
-    # pre-train the network on this data before starting MCTS
-    print("Pre-training Network on expert data...")
-    net.train()
-    for step in range(25): # 100 gradient steps
-        # copying the main training loop below
-        batch = random.sample(replay_buffer, BATCH_SIZE)
-        states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
+    # # pre-train the network on this data before starting MCTS
+    # print("Pre-training Network on expert data...")
+    # net.train()
+    # for step in range(25): # 25 gradient steps
+    #     # copying the main training loop below
+    #     batch = random.sample(replay_buffer, BATCH_SIZE)
+    #     states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
 
-        # prepare tensors
-        states_tensor = torch.FloatTensor(np.array(states)).to(device) # shape (BATCH_SIZE, state_dim) # pytorch converts numpy array to tensor faster and more reliably than raw Python lists            
-        values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device) # shape (BATCH_SIZE, 1)
+    #     # prepare tensors
+    #     states_tensor = torch.FloatTensor(np.array(states)).to(device) # shape (BATCH_SIZE, state_dim) # pytorch converts numpy array to tensor faster and more reliably than raw Python lists            
+    #     values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device) # shape (BATCH_SIZE, 1)
 
-        # targets_batch is shape(BATCH_SIZE, n_heads, 3)            
-        targets_batch = torch.stack(list(target_dists)).to(device)
+    #     # targets_batch is shape(BATCH_SIZE, n_heads, 3)            
+    #     targets_batch = torch.stack(list(target_dists)).to(device)
 
-        # forward pass
-        policy_logits, value_pred = net(states_tensor)
+    #     # forward pass
+    #     policy_logits, value_pred = net(states_tensor)
 
-        # We need to train the network on two losses:
-        # Policy Loss: The network's "intuition" (probabilities) should match the "reality" (MCTS visit counts).
-        # Value Loss: The network's predicted score should match the final result (Solved/Not Solved).
+    #     # We need to train the network on two losses:
+    #     # Policy Loss: The network's "intuition" (probabilities) should match the "reality" (MCTS visit counts).
+    #     # Value Loss: The network's predicted score should match the final result (Solved/Not Solved).
         
-        # 1. Value Loss (MSE) : did we predict the win/loss correctly?
-        value_loss = F.mse_loss(value_pred, values_tensor) # functional mse loss
+    #     # 1. Value Loss (MSE) : did we predict the win/loss correctly?
+    #     value_loss = F.mse_loss(value_pred, values_tensor) # functional mse loss
 
-        # 2. Policy Loss (cross-entropy) : did we pick the right integers?
-        # we must split the 'actions' tuple (batch of 12/27 ints) into separate targets for each head
-        # actions is a list of tuples: [(1, 0, -1, ...), (...), ...]
-        # convert to tensor : (batch_size, 12/27)
-        # action_targets = torch.LongTensor(actions).to(device) # LongTensor for integer targets
-        # # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
-        # action_targets = action_targets + 1
+    #     # 2. Policy Loss (cross-entropy) : did we pick the right integers?
+    #     # we must split the 'actions' tuple (batch of 12/27 ints) into separate targets for each head
+    #     # actions is a list of tuples: [(1, 0, -1, ...), (...), ...]
+    #     # convert to tensor : (batch_size, 12/27)
+    #     # action_targets = torch.LongTensor(actions).to(device) # LongTensor for integer targets
+    #     # # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
+    #     # action_targets = action_targets + 1
 
-        # policy loss with soft targets (KL Divergence)
-        # we treat each head independently
-        policy_loss = 0
+    #     # policy loss with soft targets (KL Divergence)
+    #     # we treat each head independently
+    #     policy_loss = 0
 
-        for i in range(len(policy_logits)):
-            # network output: Logits -> LogSoftmax for KLDiv, shape: (batch_size, 3)
-            pred_log_probs = F.log_softmax(policy_logits[i], dim=1)
+    #     for i in range(len(policy_logits)):
+    #         # network output: Logits -> LogSoftmax for KLDiv, shape: (batch_size, 3)
+    #         pred_log_probs = F.log_softmax(policy_logits[i], dim=1)
 
-            # target : probability distribution
-            # shape : (batch_size, 3)
-            target_probs = targets_batch[:, i, :]
+    #         # target : probability distribution
+    #         # shape : (batch_size, 3)
+    #         target_probs = targets_batch[:, i, :]
 
-            # KLDivLoss(input = log_probs, target = probs)
-            # "batchmean" sums over classes and averages over batch
-            policy_loss += F.kl_div(pred_log_probs, target_probs, reduction='batchmean')
+    #         # KLDivLoss(input = log_probs, target = probs)
+    #         # "batchmean" sums over classes and averages over batch
+    #         policy_loss += F.kl_div(pred_log_probs, target_probs, reduction='batchmean')
         
-        # combine losses
-        loss = value_loss + policy_loss
+    #     # combine losses
+    #     loss = value_loss + policy_loss
 
-        optimizer.zero_grad() # clear previous gradients becuase by default, PyTorch accumulates gradients
-        loss.backward()       # backpropagate to compute gradients
-        optimizer.step()      # update weights
+    #     optimizer.zero_grad() # clear previous gradients becuase by default, PyTorch accumulates gradients
+    #     loss.backward()       # backpropagate to compute gradients
+    #     optimizer.step()      # update weights
         
 
     # --------------------
@@ -260,7 +270,9 @@ def train():
 
             # assign value (winner) to all steps in this episode
             # if solved, value =1 else -1
-            final_value = 1.0 if terminated else -1.0
+
+            # new reward structure: scaled final residual norm
+            final_value = (8 ** 0.5 - np.linalg.norm(obs))/ 8 ** 0.5 if np.linalg.norm(obs) <= 8 ** 0.5 else -1.0
             print(f"  Episode {episode+1}: Steps={steps}, Result={final_value}")
 
             for data in episode_data:
@@ -344,7 +356,7 @@ def train():
         if (epoch+1) % 10 == 0:
             if not os.path.exists("checkpoints"):
                 os.makedirs("checkpoints")
-            torch.save(net.state_dict(), f"checkpoints/model_epoch_{epoch+1}.pth")
+            torch.save(net.state_dict(), f"checkpoints/latest_model.pth")
 
 if __name__ == "__main__":
     train()

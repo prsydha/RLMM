@@ -259,22 +259,25 @@ class TensorDecompositionEnv(gym.Env):
         else:  # sparse reward
             if decomposition_complete:
                 # Only reward on completion
-                base_reward = 100.0
+                base_reward = 1.0
 
                 # Efficiency bonus
-                naive_rank = self.m * self.n * self.p
-                efficiency = (naive_rank - len(self.algorithm)) / naive_rank
-                reward = base_reward + efficiency * 10.0
+                # naive_rank = self.m * self.n * self.p
+                # efficiency = (naive_rank - len(self.algorithm)) / naive_rank
+                reward = base_reward # + efficiency * 10.0
 
-                # Track best
-                if len(self.algorithm) < self.best_rank:
-                    self.best_rank = len(self.algorithm)
-                    reward += 10.0
+                # # Track best
+                # if len(self.algorithm) < self.best_rank:
+                #     self.best_rank = len(self.algorithm)
+                #     reward += 10.0
             else:
                 progress = prev_norm-curr_norm
-                reward += progress * 10.0
+                # reward += progress * 10.0
+                
+                # scale norm from [30, 0] to [-1, 1]
+
                 # Small penalty for each step to encourage efficiency
-                reward += -1-curr_norm
+                # reward += -1-curr_norm
 
         return reward
 
@@ -542,7 +545,10 @@ def test_environment():
     # print(f"   ✓ Naive algorithm uses {algo_desc['naive_multiplications']} multiplications")
     #
     # print("\n✅ All tests passed!")
-    # print("=" * 70)
+    # print("=" * 70)]
+
+def scale_norm(norm):
+    return (15.0 - norm)/15.0 
 
 
 if __name__ == "__main__":
