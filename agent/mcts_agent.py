@@ -17,10 +17,8 @@ class MCTSAgent:
         runs MCTS simulations starting from the current state.
         If return_probs is True, returns (best_action, visit_distribution_map).
         """
-        root = TreeNode(root_state, prior=1.0)
-
         # 1. expansion of root node (initialize root)
-        self._evaluate_and_expand(root)
+        root = TreeNode(root_state, prior=1.0)
 
         # 2. simulation loop
         for _ in range(self.n_simulations):
