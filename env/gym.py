@@ -58,7 +58,7 @@ class TensorDecompositionEnv(gym.Env):
             matrix_size: Tuple[int, int, int] = (2, 2, 2),
             max_rank: int = 20,
             reward_type: str = "sparse",
-            illegal_action_penalty: float = -50.0,
+            illegal_action_penalty: float = -1.0,
     ):
         """
         Initialize the tensor decomposition environment.
@@ -93,18 +93,18 @@ class TensorDecompositionEnv(gym.Env):
         self.best_rank = max_rank
 
         # Action space: Choose u, v, w vectors for rank-1 tensor u⊗v⊗w
-        # Each vector has entries in {-2, -1, 0, 1, 2} (allows linear combinations)
-        # Total actions = (5^m) * (5^n) * (5^p)
-        # For 2×2×2: 5^2 * 5^2 * 5^2 = 15,625 possible actions
+        # Each vector has entries in {-1, 0, 1} (allows linear combinations)
+        # Total actions = (3^m) * (3^n) * (3^p)
+        # For 2×2×2: 3^2 * 3^2 * 3^2 = 729 possible actions
 
         # Simplified action space: discretized choices
-        self.action_space_size = (5 ** (self.m*self.n)) * (5 ** (self.n*self.p)) * (5 ** (self.m*self.p))
-        self.action_space = spaces.Discrete(self.action_space_size) # this tells gym the possible set of actions
+        # self.action_space_size = (3 ** (self.m*self.n)) * (3 ** (self.n*self.p)) * (3 ** (self.m*self.p))
+        # self.action_space = spaces.Discrete(self.action_space_size) # this tells gym the possible set of actions
         # ... represented as integers. Gym env are expected to have action_space attribute.
         # the action integer is later decoded into uvw in _action_to_rank1_tensor().
         # ... Gym now knows, valid actions are from 0 to self.action_space_size-1 from above line of code
 
-        # Observation space: flattened residual tensor + metadata
+        # Observation space: flattened residual tensor
         # Residual tensor: m×n×p values
         # Metadata: [current_step, num_rank1_used, residual_norm]. current_step >= num_rank1_used because steps may be invalid.
         obs_size = (self.m*self.n) * (self.n*self.p) * (self.m*self.p) + 3 # length of vector the agent sees at each step
@@ -192,19 +192,21 @@ class TensorDecompositionEnv(gym.Env):
     def _get_observation(self) -> np.ndarray:
         """
         Get current observation (state representation).
-        Normalize residual tensor for better learning.
 
         Returns:
-            Normalized residual tensor
+            Flattened observation: [residual_tensor (flattened), step, rank, norm]
         """
-        # Normalize by initial target norm for stability
-        target_norm = np.linalg.norm(self.target_tensor)
-        if target_norm > 0:
-            normalized_residual = self.residual_tensor / target_norm
-        else:
-            normalized_residual = self.residual_tensor
-            
-        return normalized_residual.astype(np.float32)
+
+        # Metadata
+        # metadata = np.array([
+        #     self.current_step / self.max_rank,  # Normalized steps completed
+        #     len(self.algorithm) / self.max_rank,  # Normalized rank used
+        #     np.linalg.norm(self.residual_tensor)  # Residual norm
+        # ], dtype=np.float32)
+
+        # Combine
+
+        return self.residual_tensor
 
     def _calculate_reward(
             self,
@@ -230,55 +232,27 @@ class TensorDecompositionEnv(gym.Env):
         Returns:
             Reward value
         """
-
-        reward = 0.0 
-
+        reward = 0.0
         if not action_valid:
             return self.illegal_action_penalty
 
-        if self.reward_type == "dense":
-            # Dense reward: progress toward zero residual
+        # dense reward
+        if decomposition_complete:
+            # Only reward on completion
+            reward += 10
+
+            # Efficiency bonus
+            naive_rank = self.m * self.n * self.p
+            efficiency = naive_rank - len(self.algorithm) * 10
+            reward +=  efficiency
+
+        else:
             progress = prev_norm - curr_norm
-            reward = progress   # Direct progress (previously * 5.0)
+            reward = progress * 10.0
+        # else: yo nadini?
+        #     # penalty for each step to encourage efficiency
+        #     reward = -1.0
 
-            # Bonus for completion
-            if decomposition_complete:
-                # Reward based on efficiency
-                # Base is 1.0, plus bonus for fewer steps
-                efficiency = (self.max_rank - len(self.algorithm)) / self.max_rank
-                reward += 1.0 + efficiency
-
-                # Track best
-                if len(self.algorithm) < self.best_rank:
-                    self.best_rank = len(self.algorithm)
-                    reward += 1.0  # New best!
-
-            # Small penalty for time step
-            reward -= 0.01
-
-        else:  # sparse reward
-            if decomposition_complete:
-                # Only reward on completion
-                base_reward = 1.0
-
-                # Efficiency bonus
-                naive_rank = self.m * self.n * self.p
-                efficiency = (naive_rank - len(self.algorithm)) / naive_rank
-                reward = base_reward + efficiency
-
-                # Track best
-                if len(self.algorithm) < self.best_rank:
-                    self.best_rank = len(self.algorithm)
-                    reward += 1.0
-            else:
-                # Small penalty for each step to encourage efficiency
-                reward = -0.01
-
-                # progress = prev_norm - curr_norm
-                # Penalize large residual, but scaled down
-                reward -= (curr_norm / 100.0)
-
-        return reward
         return reward
 
     def reset(

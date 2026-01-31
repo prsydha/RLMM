@@ -5,10 +5,10 @@ from utils.tree_node import TreeNode
 
 class MCTSAgent:
     def __init__(self, model, env, n_simulations=100, cpuct=1.0, device='cpu'):
-        self.model = model
+        self.model = model # neural net with policy and value head
         self.env = env # copy of the environment for simulations
         self.n_simulations = n_simulations
-        self.cpuct = cpuct # exploration constant
+        self.cpuct = cpuct # exploration/exploitation constant
         self.device = device
         self.action_map = [-1, 0, 1]
 
@@ -25,7 +25,7 @@ class MCTSAgent:
         # 2. simulation loop
         for _ in range(self.n_simulations):
             node = root
-            search_path = [node]
+            search_path = [node] # track root -> leaf path, initially just holds the root node.
 
             # A. Selection
             while not node.is_leaf():
@@ -49,6 +49,7 @@ class MCTSAgent:
             # this represnts the full "posterior" distribution found by MCTS
             visit_counts = {action: child.visit_count for action, child in root.children.items()}
             return best_action, visit_counts
+        # returns the best action for the current root_state, and NOT the complete set of actions.
         return best_action
     
     def _select_child(self, node):
@@ -116,6 +117,7 @@ class MCTSAgent:
          # standard "Dense" (linear) layers in neural networks expect a flat vector as input
         state_tensor = torch.FloatTensor(node.state.flatten()).unsqueeze(0).to(self.device) # flatten the multidim array, convert to a PyTorch tensor with high-precision decimals to calculate gradients, add fake batch dimension, move to device( gpu or cpu)
 
+        # why rollouts not used? action space enormous, impossible to randomly reach to terminal, thats why.
         with torch.no_grad(): # disable gradient calculation for inference
             policy_logits, value = self.model(state_tensor)
 
