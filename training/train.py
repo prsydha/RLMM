@@ -31,14 +31,14 @@ from utils.warm_start import generate_demo_data
 LEARNING_RATE = 1e-3
 BATCH_SIZE = 32
 REPLAY_BUFFER_SIZE = 5000
-EPOCHS = 100         # Total training loops
+EPOCHS = 70         # Total training loops
 EPISODES_PER_EPOCH = 10  # Self-play games per loop
-MCTS_SIMS = 600       # Search depth per move
+MCTS_SIMS = 500       # Search depth per move
 
 config = {
     "run_name": "alphatensor_mcts_v1",
     "matrix_size": (2, 2, 2),
-    "max_rank": 10,
+    "max_rank": 7,
     "learning rate": LEARNING_RATE,
     "batch_size": BATCH_SIZE,
     "replay_buffer_size": REPLAY_BUFFER_SIZE,
@@ -107,10 +107,10 @@ def train():
     # Replay Buffer: Stores (state, mcts_probs, winner)
     replay_buffer = deque(maxlen=REPLAY_BUFFER_SIZE) # use deque for efficient pops from left(front)
 
-    # Warm Start with Demo Data
-    # inject the solution 50 times so the buffer is full of "winning" examples
+    # # Warm Start with Demo Data
+    # # inject the solution 50 times so the buffer is full of "winning" examples
     # demo_data = generate_demo_data(env)
-    # for _ in range(50):
+    # for _ in range(15):
     #     replay_buffer.extend(demo_data)
 
     # print(f"Replay Buffer initialized with {len(replay_buffer)} expert samples.")
@@ -118,7 +118,7 @@ def train():
     # # pre-train the network on this data before starting MCTS
     # print("Pre-training Network on expert data...")
     # net.train()
-    # for step in range(25): # 25 gradient steps
+    # for step in range(5): # 5 gradient steps
     #     # copying the main training loop below
     #     batch = random.sample(replay_buffer, BATCH_SIZE)
     #     states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
@@ -197,6 +197,7 @@ def train():
             steps = 0
             episode_reward = 0
             done = False
+            final_value = 0
 
             # play one full game
             while not done:
@@ -235,7 +236,7 @@ def train():
                 # Log step metrics
                 # --------------------
                 log_metrics({
-                "step_reward": reward,
+                "episode_reward": final_value,
                 "residual_norm": info["residual_norm"],
                 "rank_used": info["rank_used"],
                 "action_valid": int(info["action_valid"]),
@@ -245,7 +246,7 @@ def train():
 
                 print(
                 f"Episode {episode:03d} | "
-                f"Reward: {reward:7.2f} | "
+                f"Reward: {final_value:7.2f} | "
                 f"Rank: {info['rank_used']} | "
                 f"Residual: {info['residual_norm']:.4e}"
                 f"Action: {action} | "
@@ -272,8 +273,30 @@ def train():
             # if solved, value =1 else -1
 
             # new reward structure: scaled final residual norm
-            final_value = (8 ** 0.5 - np.linalg.norm(obs))/ 8 ** 0.5 if np.linalg.norm(obs) <= 8 ** 0.5 else -1.0
+            res_norm = np.linalg.norm(obs)
+            sqrt8 = 8 ** 0.5
+
+            if res_norm <= sqrt8:
+                final_value = 1 - res_norm / sqrt8
+            elif res_norm <= 6:
+                final_value = (sqrt8 - res_norm) / (6 - sqrt8)
+            else:
+                final_value = -1
+
             print(f"  Episode {episode+1}: Steps={steps}, Result={final_value}")
+
+            # --------------------
+            # Episode summary table
+            # --------------------
+            import wandb
+            table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank"])
+            table.add_data(
+                episode,
+                final_value,
+                info["residual_norm"],
+                info["rank_used"]
+            )
+            wandb.log({"episode_summary": table})
 
             for data in episode_data:
                 state_flat, policy_target = data

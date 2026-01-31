@@ -3,6 +3,8 @@ import numpy as np
 import math
 from utils.tree_node import TreeNode
 
+VIRTUAL_LOSS = 1.0
+
 class MCTSAgent:
     def __init__(self, model, env, n_simulations=100, cpuct=1.0, device='cpu'):
         self.model = model
@@ -214,4 +216,93 @@ class MCTSAgent:
         v = np.array(action_tuple[4:8])
         w = np.array(action_tuple[8:12])
         return u, v, w
+    
+    def batch_search(self, root_state, simulations=100, batch_size=8):
+        root = TreeNode(root_state, prior=1.0)
+        
+        # Expand root first to populate children
+        self._evaluate_and_expand(root) 
+        
+        # Add Dirichlet noise to root (optional, good for training)
+        self._add_dirichlet_noise(root)
+
+        num_batches = simulations // batch_size
+        
+        for _ in range(num_batches):
+            leaves = []
+            search_paths = []
+            
+            # --- PHASE 1: SELECTION (Parallel Descent) ---
+            for _ in range(batch_size):
+                node = root
+                path = [node]
+                
+                # Traverse until we hit a leaf (unexpanded node) or terminal state
+                while node.is_expanded():
+                    # Pick best child using UCB
+                    # IMPORTANT: UCB calculation must see the temporary Virtual Loss!
+                    action, node = self._select_child(node)
+                    path.append(node)
+                    
+                    # APPLY VIRTUAL LOSS IMMEDIATELY
+                    # We pretend we visited this node and it was a "loss"
+                    node.visit_count += 1
+                    node.value_sum -= VIRTUAL_LOSS 
+                
+                search_paths.append(path)
+                leaves.append(node)
+                
+            # --- PHASE 2: BATCH EVALUATION ---
+            # Collect states from all leaves that need expansion
+            # (Some leaves might be terminal, so we filter)
+            expandable_leaves = [(i, node) for i, node in enumerate(leaves) 
+                                 if not node.is_expanded() and not self._is_terminal(node)]
+            
+            if expandable_leaves:
+                indices, nodes = zip(*expandable_leaves)
+                
+                # Prepare batch for GPU
+                states = [torch.FloatTensor(n.state) for n in nodes]
+                state_batch = torch.stack(states).to(self.device)
+                
+                # ONE big forward pass instead of 8 small ones
+                with torch.no_grad():
+                    policy_logits, values = self.model(state_batch)
+                
+                # Expand all nodes
+                for i, idx in enumerate(indices):
+                    node = leaves[idx]
+                    probs = torch.softmax(policy_logits[i], dim=0)
+                    est_value = values[i].item()
+                    
+                    # Create children
+                    self._expand_node_from_probs(node, probs)
+                    
+                    # Store the REAL value to backpropagate
+                    # We store it in the path list or a temporary variable
+                    search_paths[idx][-1].temp_value = est_value
+
+            # --- PHASE 3: BACKPROPAGATION & CORRECTION ---
+            for i, path in enumerate(search_paths):
+                leaf = path[-1]
+                
+                # Determine the value to propagate
+                # If it was terminal, calculate reward. If expanded, use NN value.
+                if hasattr(leaf, 'temp_value'):
+                    value = leaf.temp_value
+                    del leaf.temp_value # Clean up
+                else:
+                    # It was terminal or we couldn't evaluate
+                    value = self._get_terminal_value(leaf)
+
+                for node in reversed(path):
+                    # 1. REMOVE VIRTUAL LOSS (Undo the "lie")
+                    node.visit_count -= 1
+                    node.value_sum += VIRTUAL_LOSS
+                    
+                    # 2. ADD REAL UPDATE
+                    node.visit_count += 1
+                    node.value_sum += value
+                    
+        return self._select_best_action(root)
 
