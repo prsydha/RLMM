@@ -58,7 +58,7 @@ class TensorDecompositionEnv(gym.Env):
             matrix_size: Tuple[int, int, int] = (2, 2, 2),
             max_rank: int = 20,
             reward_type: str = "sparse",
-            illegal_action_penalty: float = -1.0,
+            illegal_action_penalty: float = -50.0,
     ):
         """
         Initialize the tensor decomposition environment.
@@ -262,17 +262,22 @@ class TensorDecompositionEnv(gym.Env):
                 base_reward = 1.0
 
                 # Efficiency bonus
-                naive_rank = self.m * self.n * self.p
-                efficiency = (naive_rank - len(self.algorithm)) / naive_rank
-                reward = base_reward + efficiency
+                # naive_rank = self.m * self.n * self.p
+                # efficiency = (naive_rank - len(self.algorithm)) / naive_rank
+                reward = base_reward # + efficiency * 10.0
 
-                # Track best
-                if len(self.algorithm) < self.best_rank:
-                    self.best_rank = len(self.algorithm)
-                    reward += 1.0
+                # # Track best
+                # if len(self.algorithm) < self.best_rank:
+                #     self.best_rank = len(self.algorithm)
+                #     reward += 10.0
             else:
+                progress = prev_norm-curr_norm
+                # reward += progress * 10.0
+                
+                # scale norm from [30, 0] to [-1, 1]
+
                 # Small penalty for each step to encourage efficiency
-                reward = -0.01
+                # reward += -1-curr_norm
 
                 # progress = prev_norm - curr_norm
                 # Penalize large residual, but scaled down
@@ -545,7 +550,10 @@ def test_environment():
     # print(f"   ✓ Naive algorithm uses {algo_desc['naive_multiplications']} multiplications")
     #
     # print("\n✅ All tests passed!")
-    # print("=" * 70)
+    # print("=" * 70)]
+
+def scale_norm(norm):
+    return (15.0 - norm)/15.0 
 
 
 if __name__ == "__main__":

@@ -3,8 +3,10 @@ import numpy as np
 import math
 from utils.tree_node import TreeNode
 
+VIRTUAL_LOSS = 1.0
+
 class MCTSAgent:
-    def __init__(self, model, env, n_simulations=50, cpuct=1.0, device='cpu', temperature=1.0):
+    def __init__(self, model, env, n_simulations=50, cpuct=1.0, device='cpu'):
         self.model = model
         self.env = env # copy of the environment for simulations
         self.n_simulations = n_simulations
@@ -18,17 +20,11 @@ class MCTSAgent:
         runs MCTS simulations starting from the current state.
         If return_probs is True, returns (best_action, visit_distribution_map).
         """
+        # 1. expansion of root node (initialize root)
         root = TreeNode(root_state, prior=1.0)
 
         # 1. expansion of root node (initialize root)
         self._evaluate_and_expand(root)
-        
-        # Add Dirichlet noise to root for exploration (AlphaZero technique)
-        if add_noise and len(root.children) > 0:
-            actions = list(root.children.keys())
-            noise = np.random.dirichlet([0.3] * len(actions))
-            for i, action in enumerate(actions):
-                root.children[action].prior = 0.75 * root.children[action].prior + 0.25 * noise[i]
 
         # 2. simulation loop
         for _ in range(self.n_simulations):
@@ -113,6 +109,11 @@ class MCTSAgent:
         uses the neural network to evaluate the node and expand it.
         returns the value of the node.
         """
+
+        # check if node is terminal
+        if hasattr(node, 'is_terminal') and node.is_terminal:
+            return node.value_sum / max(1, node.visit_count) # return stored value
+        
          # prepare state for network
          # Optimize: reuse tensor creation to minimize CPU-GPU transfers
         state_flat = node.state.flatten()
@@ -128,13 +129,6 @@ class MCTSAgent:
             policy_logits, value = self.model(state_tensor)
 
         value = value.item() # get scalar value from tensor
-
-        # check if this state solves the environment
-        # in a real run, we might simulate 1 step of environment here
-        norm = np.linalg.norm(node.state)
-        if norm < 1e-5:
-            node.is_terminal = True # mark as terminal to avoid re-evaluation
-            return 1.0 # solved!
         
         # expansion: we cannot add all possible actions due to combinatorial explosion
         # so we sample the top K most probable actions from the policy head
@@ -171,7 +165,7 @@ class MCTSAgent:
             # for single-player optimization, value stays positive
     
 
-    def _sample_actions(self, logits, k=30):
+    def _sample_actions(self, logits, k=10):
         """
         Constructs k valid actions by sampling from the factorized logits.
         Ensures diversity by mixing sampling strategies.
@@ -181,7 +175,7 @@ class MCTSAgent:
         # convert logits to probabilities using softmax with temperature
         probs = [torch.softmax(l / self.temperature, dim=1) for l in logits]
 
-        # Strategy 1: Sample from distribution (exploration)    
+        # sample k independent actions
         for _ in range(k):
             action_list = []
             joint_prob = 1.0
@@ -192,37 +186,14 @@ class MCTSAgent:
                 val = self.action_map[idx]
 
                 action_list.append(val)
-            actions.add(tuple(action_list))
-        
-        # Strategy 2: Add some greedy actions (exploitation) - use GPU
-        for _ in range(k // 3):
-            action_list = []
-            for head_prob in probs:
-                idx = torch.argmax(head_prob, dim=1).item()
-                val = self.action_map[idx]
-                action_list.append(val)
-            actions.add(tuple(action_list))
-        
-        # Strategy 3: Add random exploration with bias toward non-zero
-        for _ in range(k // 4):
-            action_list = []
-            for _ in range(len(logits)):
-                val = np.random.choice(self.action_map, p=[0.4, 0.2, 0.4])
-                action_list.append(val)
-            actions.add(tuple(action_list))
-        
-        # Strategy 4: Heuristic sparse actions (one-hot and two-hot patterns)
-        # These are more likely to reduce residual effectively
-        for _ in range(k // 4):
-            action_list = [0] * len(logits)
-            # Randomly set 1-3 positions to non-zero
-            num_nonzero = np.random.choice([1, 2, 3], p=[0.5, 0.35, 0.15])
-            positions = np.random.choice(len(logits), size=num_nonzero, replace=False)
-            for pos in positions:
-                action_list[pos] = np.random.choice([-1, 1])
-            actions.add(tuple(action_list))
-            
-        return list(actions)
+                joint_prob *= prob_of_idx # product of probabilities for joint distribution
+
+            sampled_results.append((tuple(action_list), joint_prob))
+
+        # deduplication scheme: take the first occurrence
+        # here we just use a dict to keep unique actions and their most recent probability
+        unique_actions = {act: prob for act, prob in sampled_results}
+        return unique_actions.items()
         
     def _parse_action(self, action_tuple):
         # Convert tuple of 12 ints to u, v, w arrays
@@ -230,4 +201,93 @@ class MCTSAgent:
         v = np.array(action_tuple[4:8])
         w = np.array(action_tuple[8:12])
         return u, v, w
+    
+    def batch_search(self, root_state, simulations=100, batch_size=8):
+        root = TreeNode(root_state, prior=1.0)
+        
+        # Expand root first to populate children
+        self._evaluate_and_expand(root) 
+        
+        # Add Dirichlet noise to root (optional, good for training)
+        self._add_dirichlet_noise(root)
+
+        num_batches = simulations // batch_size
+        
+        for _ in range(num_batches):
+            leaves = []
+            search_paths = []
+            
+            # --- PHASE 1: SELECTION (Parallel Descent) ---
+            for _ in range(batch_size):
+                node = root
+                path = [node]
+                
+                # Traverse until we hit a leaf (unexpanded node) or terminal state
+                while node.is_expanded():
+                    # Pick best child using UCB
+                    # IMPORTANT: UCB calculation must see the temporary Virtual Loss!
+                    action, node = self._select_child(node)
+                    path.append(node)
+                    
+                    # APPLY VIRTUAL LOSS IMMEDIATELY
+                    # We pretend we visited this node and it was a "loss"
+                    node.visit_count += 1
+                    node.value_sum -= VIRTUAL_LOSS 
+                
+                search_paths.append(path)
+                leaves.append(node)
+                
+            # --- PHASE 2: BATCH EVALUATION ---
+            # Collect states from all leaves that need expansion
+            # (Some leaves might be terminal, so we filter)
+            expandable_leaves = [(i, node) for i, node in enumerate(leaves) 
+                                 if not node.is_expanded() and not self._is_terminal(node)]
+            
+            if expandable_leaves:
+                indices, nodes = zip(*expandable_leaves)
+                
+                # Prepare batch for GPU
+                states = [torch.FloatTensor(n.state) for n in nodes]
+                state_batch = torch.stack(states).to(self.device)
+                
+                # ONE big forward pass instead of 8 small ones
+                with torch.no_grad():
+                    policy_logits, values = self.model(state_batch)
+                
+                # Expand all nodes
+                for i, idx in enumerate(indices):
+                    node = leaves[idx]
+                    probs = torch.softmax(policy_logits[i], dim=0)
+                    est_value = values[i].item()
+                    
+                    # Create children
+                    self._expand_node_from_probs(node, probs)
+                    
+                    # Store the REAL value to backpropagate
+                    # We store it in the path list or a temporary variable
+                    search_paths[idx][-1].temp_value = est_value
+
+            # --- PHASE 3: BACKPROPAGATION & CORRECTION ---
+            for i, path in enumerate(search_paths):
+                leaf = path[-1]
+                
+                # Determine the value to propagate
+                # If it was terminal, calculate reward. If expanded, use NN value.
+                if hasattr(leaf, 'temp_value'):
+                    value = leaf.temp_value
+                    del leaf.temp_value # Clean up
+                else:
+                    # It was terminal or we couldn't evaluate
+                    value = self._get_terminal_value(leaf)
+
+                for node in reversed(path):
+                    # 1. REMOVE VIRTUAL LOSS (Undo the "lie")
+                    node.visit_count -= 1
+                    node.value_sum += VIRTUAL_LOSS
+                    
+                    # 2. ADD REAL UPDATE
+                    node.visit_count += 1
+                    node.value_sum += value
+                    
+        return self._select_best_action(root)
 

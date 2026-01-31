@@ -31,22 +31,22 @@ from training.visualizer_server import VisualizerServer
 LEARNING_RATE = 1e-3
 BATCH_SIZE = 32
 REPLAY_BUFFER_SIZE = 5000
-EPOCHS = 100         # Total training loops
-EPISODES_PER_EPOCH = 5  # Self-play games per loop
-MCTS_SIMS = 75       # MCTS simulations per move (25-50: fast, 50-100: balanced, 100-200: quality, 200+: slow but strong)
+EPOCHS = 70         # Total training loops
+EPISODES_PER_EPOCH = 10  # Self-play games per loop
+MCTS_SIMS = 500       # Search depth per move
 
 config = {
     "run_name": "alphatensor_mcts_v1",
     "matrix_size": (2, 2, 2),
-    "max_rank": 10,
+    "max_rank": 7,
     "learning rate": LEARNING_RATE,
     "batch_size": BATCH_SIZE,
     "replay_buffer_size": REPLAY_BUFFER_SIZE,
     "epochs": EPOCHS,
     "episodes_per_epoch": EPISODES_PER_EPOCH,
-    "mcts_simulations": 50,
-    "checkpoint_interval": 50,
-    "device": "cuda" if torch.cuda.is_available() else "cpu"
+    "mcts_simulations": MCTS_SIMS,
+    "checkpoint_interval": 20,
+    "device": "cpu"#"cuda" if torch.cuda.is_available() else "cpu"
 }
 
 # Start visualizer server
@@ -58,7 +58,7 @@ start_train_time = time.time()
 
 def train():
     # 1. setup
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(config["device"])
     print(f"Training on device: {device}")
     
     # GPU info
@@ -73,16 +73,17 @@ def train():
 
     # initialize Environment, Network and Optimizer
     env = TensorDecompositionEnv(matrix_size=config["matrix_size"], max_rank=config["max_rank"])
+
     net = PolicyValueNet().to(device)
-    
-    # Initialize network weights with smaller values for better initial exploration
-    def init_weights(m):
-        if isinstance(m, torch.nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight, gain=0.5)
-            if m.bias is not None:
-                torch.nn.init.constant_(m.bias, 0)
-    net.apply(init_weights)
-    
+    checkpoint_path = "checkpoints/latest_model.pth"
+
+    # Check if a saved model already exists
+    if os.path.exists(checkpoint_path):
+        print("Found existing checkpoint. Loading...")
+        net.load_state_dict(torch.load(checkpoint_path))
+    else:
+        print("No checkpoint found. Starting from scratch.")
+
     optimizer = optim.Adam(net.parameters(), lr=LEARNING_RATE)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-5)
 
@@ -95,69 +96,69 @@ def train():
     total_successes = 0
     recent_success_rate = 0.0
 
-    # Warm Start with Demo Data
-    # inject the solution 50 times so the buffer is full of "winning" examples
-    demo_data = generate_demo_data(env)
-    for _ in range(50):
-        replay_buffer.extend(demo_data)
+    # # Warm Start with Demo Data
+    # # inject the solution 50 times so the buffer is full of "winning" examples
+    # demo_data = generate_demo_data(env)
+    # for _ in range(15):
+    #     replay_buffer.extend(demo_data)
 
-    print(f"Replay Buffer initialized with {len(replay_buffer)} expert samples.")
+    # print(f"Replay Buffer initialized with {len(replay_buffer)} expert samples.")
 
-    # pre-train the network on this data before starting MCTS
-    print("Pre-training Network on expert data...")
-    net.train()
-    for step in range(100): # 100 gradient steps
-        # copying the main training loop below
-        batch = random.sample(replay_buffer, BATCH_SIZE)
-        states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
+    # # pre-train the network on this data before starting MCTS
+    # print("Pre-training Network on expert data...")
+    # net.train()
+    # for step in range(5): # 5 gradient steps
+    #     # copying the main training loop below
+    #     batch = random.sample(replay_buffer, BATCH_SIZE)
+    #     states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
 
-        # prepare tensors
-        states_tensor = torch.FloatTensor(np.array(states)).to(device) # shape (BATCH_SIZE, state_dim) # pytorch converts numpy array to tensor faster and more reliably than raw Python lists            
-        values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device) # shape (BATCH_SIZE, 1)
+    #     # prepare tensors
+    #     states_tensor = torch.FloatTensor(np.array(states)).to(device) # shape (BATCH_SIZE, state_dim) # pytorch converts numpy array to tensor faster and more reliably than raw Python lists            
+    #     values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device) # shape (BATCH_SIZE, 1)
 
-        # targets_batch is shape(BATCH_SIZE, n_heads, 3)            
-        targets_batch = torch.stack(list(target_dists)).to(device)
+    #     # targets_batch is shape(BATCH_SIZE, n_heads, 3)            
+    #     targets_batch = torch.stack(list(target_dists)).to(device)
 
-        # forward pass
-        policy_logits, value_pred = net(states_tensor)
+    #     # forward pass
+    #     policy_logits, value_pred = net(states_tensor)
 
-        # We need to train the network on two losses:
-        # Policy Loss: The network's "intuition" (probabilities) should match the "reality" (MCTS visit counts).
-        # Value Loss: The network's predicted score should match the final result (Solved/Not Solved).
+    #     # We need to train the network on two losses:
+    #     # Policy Loss: The network's "intuition" (probabilities) should match the "reality" (MCTS visit counts).
+    #     # Value Loss: The network's predicted score should match the final result (Solved/Not Solved).
         
-        # 1. Value Loss (MSE) : did we predict the win/loss correctly?
-        value_loss = F.mse_loss(value_pred, values_tensor) # functional mse loss
+    #     # 1. Value Loss (MSE) : did we predict the win/loss correctly?
+    #     value_loss = F.mse_loss(value_pred, values_tensor) # functional mse loss
 
-        # 2. Policy Loss (cross-entropy) : did we pick the right integers?
-        # we must split the 'actions' tuple (batch of 12/27 ints) into separate targets for each head
-        # actions is a list of tuples: [(1, 0, -1, ...), (...), ...]
-        # convert to tensor : (batch_size, 12/27)
-        # action_targets = torch.LongTensor(actions).to(device) # LongTensor for integer targets
-        # # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
-        # action_targets = action_targets + 1
+    #     # 2. Policy Loss (cross-entropy) : did we pick the right integers?
+    #     # we must split the 'actions' tuple (batch of 12/27 ints) into separate targets for each head
+    #     # actions is a list of tuples: [(1, 0, -1, ...), (...), ...]
+    #     # convert to tensor : (batch_size, 12/27)
+    #     # action_targets = torch.LongTensor(actions).to(device) # LongTensor for integer targets
+    #     # # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
+    #     # action_targets = action_targets + 1
 
-        # policy loss with soft targets (KL Divergence)
-        # we treat each head independently
-        policy_loss = 0
+    #     # policy loss with soft targets (KL Divergence)
+    #     # we treat each head independently
+    #     policy_loss = 0
 
-        for i in range(len(policy_logits)):
-            # network output: Logits -> LogSoftmax for KLDiv, shape: (batch_size, 3)
-            pred_log_probs = F.log_softmax(policy_logits[i], dim=1)
+    #     for i in range(len(policy_logits)):
+    #         # network output: Logits -> LogSoftmax for KLDiv, shape: (batch_size, 3)
+    #         pred_log_probs = F.log_softmax(policy_logits[i], dim=1)
 
-            # target : probability distribution
-            # shape : (batch_size, 3)
-            target_probs = targets_batch[:, i, :]
+    #         # target : probability distribution
+    #         # shape : (batch_size, 3)
+    #         target_probs = targets_batch[:, i, :]
 
-            # KLDivLoss(input = log_probs, target = probs)
-            # "batchmean" sums over classes and averages over batch
-            policy_loss += F.kl_div(pred_log_probs, target_probs, reduction='batchmean')
+    #         # KLDivLoss(input = log_probs, target = probs)
+    #         # "batchmean" sums over classes and averages over batch
+    #         policy_loss += F.kl_div(pred_log_probs, target_probs, reduction='batchmean')
         
-        # combine losses
-        loss = value_loss + policy_loss
+    #     # combine losses
+    #     loss = value_loss + policy_loss
 
-        optimizer.zero_grad() # clear previous gradients becuase by default, PyTorch accumulates gradients
-        loss.backward()       # backpropagate to compute gradients
-        optimizer.step()      # update weights
+    #     optimizer.zero_grad() # clear previous gradients becuase by default, PyTorch accumulates gradients
+    #     loss.backward()       # backpropagate to compute gradients
+    #     optimizer.step()      # update weights
         
 
     # --------------------
@@ -167,6 +168,9 @@ def train():
     init_logger(config)
 
     global_step = 0
+
+    # initialzing MCTS agent outside epoch loop to retain learned tree structure
+    mcts = MCTSAgent(model = net, env = env, n_simulations=MCTS_SIMS, device=config["device"])
 
     for epoch in range(EPOCHS):
         print(f"\n--- Epoch {epoch+1}/{EPOCHS} ---")
@@ -189,10 +193,7 @@ def train():
 
         for episode in range(EPISODES_PER_EPOCH):
             obs, info = env.reset()
-            # Progressive MCTS: start with fewer simulations, increase over time
-            current_sims = int(MCTS_SIMS * (0.5 + 0.5 * (epoch / EPOCHS)))
-            current_sims = max(25, min(current_sims, MCTS_SIMS))
-            mcts = MCTSAgent(model = net, env = env, n_simulations=current_sims, device=device, temperature=temperature)
+            # mcts = MCTSAgent(model = net, env = env, n_simulations=MCTS_SIMS, device=config["device"])
 
             episode_data = [] # Stores (state, action_dist) for this game
             steps = 0
@@ -200,6 +201,7 @@ def train():
             valid_actions = 0
             invalid_actions = 0
             done = False
+            final_value = 0
 
             # play one full game
             while not done:
@@ -257,7 +259,7 @@ def train():
                 # Log step metrics
                 # --------------------
                 log_metrics({
-                "step_reward": reward,
+                "episode_reward": final_value,
                 "residual_norm": info["residual_norm"],
                 "rank_used": info["rank_used"],
                 "action_valid": int(info["action_valid"]),
@@ -265,31 +267,16 @@ def train():
                 "action": action
                 }, step=global_step)
 
-                # Only print every 5th step to reduce clutter
-                if steps % 5 == 0 or done:
-                    print(
-                    f"Ep {episode:03d} | "
-                    f"R: {reward:6.1f} | "
-                    f"Rank: {info['rank_used']} | "
-                    f"Norm: {info['residual_norm']:.2e} | "
-                    f"Step: {steps}"
-                    )
-
-
-                        # Broadcast to visualizer
-                viz_server.broadcast({
-                    "type": "step",
-                    "global_step": global_step,
-                    "episode": episode,
-                    "step_count": steps,
-                    "reward": reward,
-                    "residual": info["residual_norm"],
-                    "rank": info["rank_used"],
-                    "sparsity": action_sparsity,
-                    "action": action,
-                    "elapsed": time.time() - start_train_time
-                })
-                        
+                print(
+                f"Episode {episode:03d} | "
+                f"Reward: {final_value:7.2f} | "
+                f"Rank: {info['rank_used']} | "
+                f"Residual: {info['residual_norm']:.4e}"
+                f"Action: {action} | "
+                f"Steps: {steps} | "
+                f"Observation residual: {np.linalg.norm(obs):.2f} | "
+                )
+                
             # end of one episode
 
             # --------------------
@@ -307,21 +294,33 @@ def train():
 
             # assign value (winner) to all steps in this episode
             # if solved, value =1 else -1
-            final_value = 1.0 if terminated else -1.0
-            
-            if terminated:
-                epoch_successes += 1
-                total_successes += 1
-                print(f"  🎯 Episode {episode+1}: SUCCESS! Steps={steps}, Rank={env.algorithm.__len__()}, Valid={valid_actions}, Invalid={invalid_actions}, Reward={episode_reward:.2f}")
-            else:
-                print(f"  Episode {episode+1}: Steps={steps}, Valid={valid_actions}, Invalid={invalid_actions}, Result={final_value:.1f}, Reward={episode_reward:.2f}, FinalNorm={info['residual_norm']:.4e}")
 
-            # Prioritize successful episodes and progress
-            priority = 1.0 if terminated else 0.5
-            if terminated and len(env.algorithm) < best_rank_found:
-                priority = 2.0  # High priority for new best solutions
-                best_rank_found = len(env.algorithm)
-                
+            # new reward structure: scaled final residual norm
+            res_norm = np.linalg.norm(obs)
+            sqrt8 = 8 ** 0.5
+
+            if res_norm <= sqrt8:
+                final_value = 1 - res_norm / sqrt8
+            elif res_norm <= 6:
+                final_value = (sqrt8 - res_norm) / (6 - sqrt8)
+            else:
+                final_value = -1
+
+            print(f"  Episode {episode+1}: Steps={steps}, Result={final_value}")
+
+            # --------------------
+            # Episode summary table
+            # --------------------
+            import wandb
+            table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank"])
+            table.add_data(
+                episode,
+                final_value,
+                info["residual_norm"],
+                info["rank_used"]
+            )
+            wandb.log({"episode_summary": table})
+
             for data in episode_data:
                 state_flat, action_tuple = data
                 replay_buffer.append((state_flat, action_tuple, final_value, priority))
@@ -504,20 +503,7 @@ def train():
         if (epoch+1) % 10 == 0:
             if not os.path.exists("checkpoints"):
                 os.makedirs("checkpoints")
-            checkpoint = {
-                'epoch': epoch + 1,
-                'model_state_dict': net.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'best_rank': best_rank_found,
-                'replay_buffer': list(replay_buffer)[-1000:]  # Save last 1000 experiences
-            }
-            torch.save(checkpoint, f"checkpoints/model_epoch_{epoch+1}.pth")
-            print(f"  Checkpoint saved!")
-        
-        # Early stopping
-        if epochs_without_improvement >= 30:
-            print(f"\n⚠️ No improvement for {epochs_without_improvement} eval cycles. Consider stopping or adjusting hyperparameters.")
+            torch.save(net.state_dict(), f"checkpoints/latest_model.pth")
 
 if __name__ == "__main__":
     train()

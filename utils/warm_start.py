@@ -104,3 +104,5 @@ def generate_demo_data(env):
         print("Warning: Standard Algorithm did not fully solve the tensor. Check indices.")
     
     return demo_buffer
+
+
