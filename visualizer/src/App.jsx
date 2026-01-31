@@ -90,19 +90,15 @@ export default function App() {
 
       <div className="main-layout">
         <div className="left-panel">
-          <div className="visualizer-container" style={{ display: 'flex', flexDirection: 'column' }}>
-            {/* Top Half: Monitor */}
-            <div style={{ flex: 1, minHeight: '300px' }}>
-              <TrainingMonitor
-                onStatsUpdate={handleStatsUpdate}
-                onConnectionChange={setConnected}
-                onLog={addLog}
-              />
-            </div>
-
-            {/* Bottom Half: Tensor Visualizer */}
+          <div className="visualizer-container">
+            <TrainingMonitor
+              onStatsUpdate={handleStatsUpdate}
+              onConnectionChange={setConnected}
+              onLog={addLog}
+            />
+            {/* Tensor Visualizer */}
             {stats.action && (
-              <div style={{ padding: '20px', background: '#0d0e12', borderTop: '1px solid #333' }}>
+              <div style={{ padding: '15px', background: '#0d0e12', borderTop: '1px solid #333' }}>
                 <TensorView action={stats.action} />
               </div>
             )}

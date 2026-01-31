@@ -19,8 +19,11 @@ body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   background-color: var(--bg-dark);
   color: var(--text-primary);
-  overflow: hidden;
+  margin: 0;
+  padding: 0;
   height: 100vh;
+  overflow: hidden;
+  /* Prevent body scroll, use internal scrolling */
 }
 
 .app {
@@ -92,23 +95,32 @@ body {
   display: flex;
   flex-direction: column;
   position: relative;
+  overflow-y: auto;
+  /* Enable scrolling */
 }
 
 .visualizer-container {
   flex: 1;
   position: relative;
   background: radial-gradient(circle at center, #1a1b26 0%, #0a0a15 100%);
+  overflow-y: auto;
+  /* Enable scrolling for content */
+  min-height: 0;
+  /* Important for flex containers */
 }
 
 /* Terminal Panel */
 .terminal-panel {
-  height: 200px;
+  height: 180px;
+  /* Reduced from 200px for laptop screens */
   background: #0d0e12;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   display: flex;
   flex-direction: column;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 12px;
+  flex-shrink: 0;
+  /* Prevent shrinking */
 }
 
 .terminal-header {
@@ -175,8 +187,10 @@ body {
   width: 320px;
   background: var(--bg-panel);
   border-left: 1px solid rgba(255, 255, 255, 0.05);
-  padding: 20px;
+  padding: 16px;
+  /* Reduced from 20px */
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .control-panel {
