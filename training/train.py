@@ -31,7 +31,7 @@ MCTS_SIMS = project_config.MCTS_SIMS
 
 config = {
     "run_name": "alphatensor_mcts_full_explore",
-    "matrix_size": (2, 2, 2),
+    "matrix_size": (3, 3, 3),
     "max_rank": project_config.MAX_STEPS,  # Use config value (20 for full exploration)
     "learning rate": LEARNING_RATE,
     "batch_size": BATCH_SIZE,
@@ -362,13 +362,13 @@ def train():
                 
                     # Calculate live reward/status for visualization
                     curr_norm = info["residual_norm"]
-                    sqrt8 = 8 ** 0.5
+                    sqrt27 = 27 ** 0.5
                     
-                    if curr_norm <= sqrt8:
-                        current_val = 1 - curr_norm / sqrt8
+                    if curr_norm <= sqrt27:
+                        current_val = 1 - curr_norm / sqrt27
                         decision_status = "SOLVED"
                     elif curr_norm <= 6:
-                        current_val = (sqrt8 - curr_norm) / (6 - sqrt8)
+                        current_val = (sqrt27 - curr_norm) / (6 - sqrt27)
                         decision_status = "PARTIAL"
                     else:
                         current_val = -1
@@ -420,17 +420,17 @@ def train():
 
                 # new reward structure: scaled final residual norm
                 res_norm = np.linalg.norm(obs)
-                sqrt8 = 8 ** 0.5
+                sqrt27 = 27 ** 0.5
 
-                if res_norm <= sqrt8:
-                    final_value = 1 - res_norm / sqrt8
+                if res_norm <= sqrt27:
+                    final_value = 1 - res_norm / sqrt27
                 elif res_norm <= 6:
-                    final_value = (sqrt8 - res_norm) / (6 - sqrt8)
+                    final_value = (sqrt27 - res_norm) / (6 - sqrt27)
                 else:
                     final_value = -1
 
                 # Track episode success
-                episode_solved = (res_norm <= sqrt8)
+                episode_solved = (res_norm <= sqrt27)
                 recent_episodes.append(1 if episode_solved else 0)
                 recent_success_rate = sum(recent_episodes) / len(recent_episodes)
                 
