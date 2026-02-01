@@ -1,0 +1,132 @@
+{
+  "run_id": "run-1769945349",
+  "problem": {
+    "matrix_shape": [
+      2,
+      2
+    ],
+    "dtype": "float32",
+    "operation": "matmul"
+  },
+  "environment": {
+    "gpu": "CUDA Device 0 (Compute 75)",
+    "python": "3.10.0",
+    "cupy": "13.6.0"
+  },
+  "implementations": [
+    {
+      "name": "naive",
+      "source": "naive",
+      "kernel_name": "matmul_naive_2x2",
+      "actions": [],
+      "correctness": {
+        "passed": true,
+        "max_abs_error": 1.4901161193847656e-08,
+        "max_rel_error": 9.949781798468393e-08,
+        "rtol": 1e-05,
+        "atol": 1e-06
+      },
+      "performance": {
+        "latency_us": 24.784,
+        "num_multiplications": 8,
+        "op_count": 16
+      },
+      "kernel": {
+        "launch": {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "block": [
+            2,
+            2,
+            1
+          ],
+          "shared_mem_bytes": 0
+        }
+      }
+    },
+    {
+      "name": "strassen",
+      "source": "strassen",
+      "kernel_name": "matmul_strassen_2x2",
+      "actions": [
+        {
+          "type": "algorithm_optimization",
+          "description": "Strassen's 7-multiplication algorithm"
+        }
+      ],
+      "correctness": {
+        "passed": true,
+        "max_abs_error": 5.960464477539063e-08,
+        "max_rel_error": 2.003522610038999e-07,
+        "rtol": 1e-05,
+        "atol": 1e-06
+      },
+      "performance": {
+        "latency_us": 16.528,
+        "num_multiplications": 7,
+        "op_count": 14
+      },
+      "kernel": {
+        "launch": {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "block": [
+            7,
+            1,
+            1
+          ],
+          "shared_mem_bytes": 28
+        }
+      }
+    },
+    {
+      "name": "agent",
+      "source": "agent",
+      "kernel_name": "matmul_agent_2x2",
+      "actions": [
+        {
+          "type": "tensor_decomposition",
+          "description": "Agent-discovered 11-rank decomposition"
+        }
+      ],
+      "correctness": {
+        "passed": true,
+        "max_abs_error": 1.4901161193847656e-08,
+        "max_rel_error": 1.0017613050194996e-07,
+        "rtol": 1e-05,
+        "atol": 1e-06
+      },
+      "performance": {
+        "latency_us": 30.752,
+        "num_multiplications": 11,
+        "op_count": 22
+      },
+      "kernel": {
+        "launch": {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "block": [
+            2,
+            2,
+            1
+          ],
+          "shared_mem_bytes": 0
+        }
+      }
+    }
+  ],
+  "summary": {
+    "best_latency": 16.528,
+    "best_multiplications": 7,
+    "all_correct": true
+  }
+}

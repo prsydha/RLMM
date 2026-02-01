@@ -19,6 +19,10 @@ class TreeNode:
     def is_leaf(self):
         return len(self.children) == 0
     
+    def is_expanded(self):
+        """Check if this node has been expanded (has children)"""
+        return len(self.children) > 0
+    
     def value(self):
         if self.visit_count == 0:
             return 0
