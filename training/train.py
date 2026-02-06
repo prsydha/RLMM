@@ -30,10 +30,10 @@ from utils.warm_start import generate_demo_data
 # --- Hyperparameters ---
 LEARNING_RATE = 1e-3
 BATCH_SIZE = 32
-REPLAY_BUFFER_SIZE = 5000
-EPOCHS = 70         # Total training loops
+REPLAY_BUFFER_SIZE = 8000
+EPOCHS = 100         # Total training loops
 EPISODES_PER_EPOCH = 10  # Self-play games per loop
-MCTS_SIMS = 500       # Search depth per move
+MCTS_SIMS = 800       # Search depth per move
 
 config = {
     "run_name": "alphatensor_mcts_v1",
@@ -45,7 +45,7 @@ config = {
     "epochs": EPOCHS,
     "episodes_per_epoch": EPISODES_PER_EPOCH,
     "mcts_simulations": MCTS_SIMS,
-    "checkpoint_interval": 20,
+    "checkpoint_interval": 10,
     "device": "cpu"#"cuda" if torch.cuda.is_available() else "cpu"
 }
 
@@ -81,7 +81,7 @@ def compute_marginal_targets(visit_counts, n_heads=12, action_map=[-1, 0, 1]):
             # add probability mass to this choice
             targets[head_idx, action_idx] += prob # add to the corresponding head and action index
 
-        return targets
+    return targets
 
 
 def train():
@@ -196,6 +196,7 @@ def train():
             episode_data = [] # Stores (state, action_dist) for this game
             steps = 0
             episode_reward = 0
+            step_reward = 0
             done = False
             final_value = 0
 
@@ -218,8 +219,10 @@ def train():
                 # compute visit marginals for training target
                 marginal_targets = compute_marginal_targets(visit_counts, n_heads=project_config.N_HEADS)
 
-                # store data : (state, targets, result_placeholder)
-                episode_data.append([obs.flatten(), marginal_targets])
+                step_reward = calc_reward(obs)
+
+                # store data : (state, targets, result_placeholder, step_reward)
+                episode_data.append([obs.flatten(), marginal_targets], step_reward) # using dense reward
 
                 obs = next_obs
                 steps += 1
@@ -236,7 +239,7 @@ def train():
                 # Log step metrics
                 # --------------------
                 log_metrics({
-                "episode_reward": final_value,
+                "episode_reward": step_reward * 10,
                 "residual_norm": info["residual_norm"],
                 "rank_used": info["rank_used"],
                 "action_valid": int(info["action_valid"]),
@@ -246,7 +249,7 @@ def train():
 
                 print(
                 f"Episode {episode:03d} | "
-                f"Reward: {final_value:7.2f} | "
+                f"Reward: {step_reward:7.2f} | "
                 f"Rank: {info['rank_used']} | "
                 f"Residual: {info['residual_norm']:.4e}"
                 f"Action: {action} | "
@@ -256,32 +259,19 @@ def train():
                 
             # end of one episode
 
-            # --------------------
-            # Episode summary table
-            # --------------------
-            import wandb
-            table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank"])
-            table.add_data(
-                episode,
-                reward,
-                info["residual_norm"],
-                info["rank_used"]
-            )
-            wandb.log({"episode_summary": table})
-
             # assign value (winner) to all steps in this episode
             # if solved, value =1 else -1
 
             # new reward structure: scaled final residual norm
-            res_norm = np.linalg.norm(obs)
-            sqrt8 = 8 ** 0.5
+            # res_norm = np.linalg.norm(obs)
+            # sqrt8 = 8 ** 0.5
 
-            if res_norm <= sqrt8:
-                final_value = 1 - res_norm / sqrt8
-            elif res_norm <= 6:
-                final_value = (sqrt8 - res_norm) / (6 - sqrt8)
-            else:
-                final_value = -1
+            # if res_norm <= sqrt8:
+            #     final_value = 1 - res_norm / sqrt8
+            # elif res_norm <= 6:
+            #     final_value = (sqrt8 - res_norm) / (6 - sqrt8)
+            # else:
+            #     final_value = -1
 
             print(f"  Episode {episode+1}: Steps={steps}, Result={final_value}")
 
@@ -299,8 +289,7 @@ def train():
             wandb.log({"episode_summary": table})
 
             for data in episode_data:
-                state_flat, policy_target = data
-                replay_buffer.append((state_flat, policy_target, final_value))
+                replay_buffer.append((data))
 
         # --- B. Training Phase (Network Update)--- once per Epoch ( after several episodes )
 
@@ -380,6 +369,23 @@ def train():
             if not os.path.exists("checkpoints"):
                 os.makedirs("checkpoints")
             torch.save(net.state_dict(), f"checkpoints/latest_model.pth")
+
+def calc_reward(obs):
+    norm = np.linalg.norm(obs)
+    sqrt8 = 8 ** 0.5
+    val = 0
+    if norm <= sqrt8:
+        val = 1 - norm / sqrt8
+    elif norm <= 6:
+        val = (sqrt8 - norm) / (6 - sqrt8)
+    else:
+        val = -1
+    return val
+
+def calc_dense_reward(prev_state, current_state):
+    prev_norm = np.linalg.norm(prev_state)
+    current_norm = np.linalg.norm(current_state)
+
 
 if __name__ == "__main__":
     train()
