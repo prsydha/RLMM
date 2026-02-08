@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import config
 
 # Residual Block: a common building block in deep networks that helps with training very deep architectures by allowing gradients to flow through skip connections. It is a structural design where the input to a layer is added directly to its output, allowing information to bypass certain layers.
 
@@ -28,7 +29,7 @@ class ResBlock(nn.Module):
         return F.gelu(out)
 
 class DeepTensorNet(nn.Module):
-    def __init__(self, input_dim, hidden_dim=512, num_res_blocks=6):
+    def __init__(self, input_dim=config.INPUT_DIM, hidden_dim=512, num_res_blocks=6):
         super().__init__()
         
         # 1. Input Projection

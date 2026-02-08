@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
 from models.pv_network import PolicyValueNet
+from models.deep_pv_network import DeepTensorNet
 from project.logger import init_logger, log_metrics
 import config as project_config
 from utils.warm_start import generate_demo_data
@@ -92,7 +93,7 @@ def train():
     # initialize Environment, Network and Optimizer
     env = TensorDecompositionEnv(matrix_size=config["matrix_size"], max_rank=config["max_rank"])
 
-    net = PolicyValueNet().to(device)
+    net = DeepTensorNet().to(device)
     checkpoint_path = "checkpoints/latest_model.pth"
 
     # Check if a saved model already exists
@@ -222,7 +223,7 @@ def train():
                 step_reward = calc_reward(obs)
 
                 # store data : (state, targets, result_placeholder, step_reward)
-                episode_data.append([obs.flatten(), marginal_targets], step_reward) # using dense reward
+                episode_data.append([obs.flatten(), marginal_targets,  step_reward]) # using dense reward
 
                 obs = next_obs
                 steps += 1

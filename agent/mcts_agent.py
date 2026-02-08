@@ -3,7 +3,7 @@ import numpy as np
 import math
 from utils.tree_node import TreeNode
 
-VIRTUAL_LOSS = 1.0
+VIRTUAL_LOSS = 3.0
 
 class MCTSAgent:
     def __init__(self, model, env, n_simulations=100, cpuct=1.0, device='cpu'):
