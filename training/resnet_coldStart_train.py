@@ -21,26 +21,25 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
-from models.pv_network import PolicyValueNet
-from models.pv_network_resnet import DeepTensorNet
+from models.resnet_pv_network import PolicyValueNet
 from project.logger import init_logger, log_metrics
 import config as project_config
 from utils.warm_start import generate_demo_data
 
 # from mlo.checkpoint import save_checkpoint
 
-# --- Hyperparameters ---
-LEARNING_RATE = 1e-3
-BATCH_SIZE = 32
-REPLAY_BUFFER_SIZE = 8000
-EPOCHS = 100         # Total training loops
-EPISODES_PER_EPOCH = 10  # Self-play games per loop
-MCTS_SIMS = 500       # Search depth per move
+# --- Hyperparameters (now from config) ---
+LEARNING_RATE = project_config.LEARNING_RATE
+BATCH_SIZE = project_config.BATCH_SIZE
+REPLAY_BUFFER_SIZE = project_config.REPLAY_BUFFER_SIZE
+EPOCHS = project_config.EPOCHS
+EPISODES_PER_EPOCH = project_config.EPISODES_PER_EPOCH
+MCTS_SIMS = project_config.MCTS_SIMS
 
 config = {
-    "run_name": "alphatensor_mcts_cold_resnet",
+    "run_name": "RLMM_resnet_and_coldStart",
     "matrix_size": (2, 2, 2),
-    "max_rank": 7,
+    "max_rank": project_config.MAX_STEPS,  # Use config value (20 for full exploration)
     "learning rate": LEARNING_RATE,
     "batch_size": BATCH_SIZE,
     "replay_buffer_size": REPLAY_BUFFER_SIZE,
@@ -48,7 +47,7 @@ config = {
     "episodes_per_epoch": EPISODES_PER_EPOCH,
     "mcts_simulations": MCTS_SIMS,
     "checkpoint_interval": 10,
-    "device": "cpu"  # "cuda" if torch.cuda.is_available() else "cpu"
+    "device": "cuda" if torch.cuda.is_available() else "cpu"
 }
 
 
@@ -95,8 +94,8 @@ def train():
     # initialize Environment, Network and Optimizer
     env = TensorDecompositionEnv(matrix_size=config["matrix_size"], max_rank=config["max_rank"])
 
-    net = DeepTensorNet().to(device)
-    checkpoint_path = "checkpoints/resnet/latest_model.pth"
+    net = PolicyValueNet().to(device)
+    checkpoint_path = "checkpoints/resnet_cold/latest_model.pth"
 
     # Check if a saved model already exists
     if os.path.exists(checkpoint_path):
@@ -351,10 +350,10 @@ def train():
 
         # Save Checkpoint
         if (epoch + 1) % 10 == 0:
-            if not os.path.exists("checkpoints/resnet"):
-                os.makedirs("checkpoints/resnet")
-            torch.save(net.state_dict(), f"checkpoints/resnet/model_epoch_{epoch + 1}.pth")
-            torch.save(net.state_dict(), f"checkpoints/resnet/latest_model.pth")
+            if not os.path.exists("checkpoints/resnet_cold"):
+                os.makedirs("checkpoints/resnet_cold")
+            torch.save(net.state_dict(), f"checkpoints/resnet_cold/model_epoch_{epoch + 1}.pth")
+            torch.save(net.state_dict(), f"checkpoints/resnet_cold/latest_model.pth")
             print(f"Checkpoint saved!")
 
 
