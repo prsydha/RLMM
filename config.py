@@ -14,11 +14,11 @@ INPUT_DIM = TENSOR_DIM + 3  # 64 (residual tensor) + 3 (metadata: step, rank, no
 
 # --- Training Hyperparameters ---
 LEARNING_RATE = 1e-4        # Lower LR for more stable exploration
-BATCH_SIZE = 16             # REDUCED for testing (was 128)
+BATCH_SIZE = 128            # Restored to 128 for stable learning
 REPLAY_BUFFER_SIZE = 20000  # Larger buffer to store diverse solutions
-EPOCHS = 5                  # REDUCED for testing (was 200)
-EPISODES_PER_EPOCH = 5      # REDUCED for testing (was 10)
-MCTS_SIMS = 50              # REDUCED for testing (was 350)
+EPOCHS = 200                # Restored to 200 for long-term training
+EPISODES_PER_EPOCH = 10      # Restored to 10
+MCTS_SIMS = 350             # Restored to 350 for deep thinking
 
 # --- MCTS Settings ---
 CPUCT = 2.0                 # Higher exploration constant
@@ -32,8 +32,8 @@ EFFICIENCY_BONUS = 5.0      # Strong bonus multiplier for finding fewer-step sol
 TARGET_RANK = 7             # Strassen's algorithm uses 7 multiplications
 
 # --- Warm Start Settings ---
-WARM_START_COPIES = 5       # REDUCED for testing (was 50)
-PRE_TRAIN_STEPS = 10        # REDUCED for testing (was 100)
+WARM_START_COPIES = 50      # Restored to 50
+PRE_TRAIN_STEPS = 100       # Restored to 100
 
 # --- Full Exploration Settings ---
 EXPLORE_ALL_RANKS = True    # Enable exploration across all rank counts

@@ -164,10 +164,10 @@ def pretrain_on_expert(net, replay_buffer, device, optimizer, steps=50, global_s
         
         # Log pre-training to wandb using global_step (Every step for visibility)
             wandb.log({
-                "Core/pretrain_step": step,
-                "Core/pretrain_total_loss": loss.item(),
-                "Core/pretrain_value_loss": value_loss.item(),
-                "Core/pretrain_policy_loss": policy_loss.item()
+                "Pretrain/step": step,
+                "Pretrain/total_loss": loss.item(),
+                "Pretrain/value_loss": value_loss.item(),
+                "Pretrain/policy_loss": policy_loss.item()
             }, step=global_step)
         
         global_step += 1
@@ -254,14 +254,19 @@ def train():
     
     init_logger(config)
     
-    # Synchronize WandB axes: Core to Epoch, Episode to Game Count
-    wandb.define_metric("Core/*", step_metric="Epoch")
+    # Define custom X-axes first
+    wandb.define_metric("Epoch")
+    wandb.define_metric("global_episode_count")
+    wandb.define_metric("Pretrain/step")
+    
+    # Synchronize groups to their axes
+    wandb.define_metric("Epoch/*", step_metric="Epoch")
     wandb.define_metric("Episode/*", step_metric="global_episode_count")
-    wandb.define_metric("Core/pretrain_*", step_metric="Core/pretrain_step")
+    wandb.define_metric("Pretrain/*", step_metric="Pretrain/step")
+    wandb.define_metric("Stats/eval_*", step_metric="Epoch")
     
     # Pre-train the network on expert data before starting MCTS
     global_step = pretrain_on_expert(net, replay_buffer, device, optimizer, steps=project_config.PRE_TRAIN_STEPS, global_step=global_step)
-    wandb.define_metric("Stats/eval_*", step_metric="Epoch")
     
     # Start Visualizer Server
     viz = VisualizerServer()
@@ -617,19 +622,18 @@ def train():
             # Log epoch metrics against the custom "Epoch" step AND global_step to keep monotonicity
             global_step += 1
             log_metrics({
-                "Epoch": epoch,  # The x-axis for Core metrics
-                "Core/epoch_loss": avg_loss,
-                "Core/epoch_value_loss": avg_value_loss,
-                "Core/epoch_policy_loss": avg_policy_loss,
-                "Core/epoch_successes": epoch_successes,
+                "Epoch": epoch + 1,  # The x-axis for Epoch group
+                "Epoch/loss": avg_loss,
+                "Epoch/value_loss": avg_value_loss,
+                "Epoch/policy_loss": avg_policy_loss,
+                "Epoch/success_rate": recent_success_rate,
+                "Epoch/total_successes": total_successes,
                 "Stats/learning_rate": current_lr,
                 "Stats/batch_size": project_config.BATCH_SIZE,
                 "Stats/replay_buffer_size": len(replay_buffer),
                 "Stats/best_rank_found": best_rank_found,
                 "Stats/temperature": temperature,
-                "Stats/epsilon": eps_greedy,
-                "Stats/total_successes": total_successes,
-                "Stats/success_rate": recent_success_rate
+                "Stats/epsilon": eps_greedy
             }, step=global_step)
         
             # Step learning rate scheduler
