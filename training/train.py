@@ -200,16 +200,39 @@ def train():
         hidden_dim=project_config.HIDDEN_DIM, 
         n_heads=project_config.N_HEADS
     ).to(device)
+    # Initialize metrics tracking
+    episode_history = []
+    start_epoch = 0
+    global_step = 0
     checkpoint_path = "checkpoints/latest_model.pth"
 
     # Check if a saved model already exists
-    # NOTE: With the new architecture, old checkpoints won't be compatible
-    # You should delete/rename old checkpoints to start fresh with the new model
     if os.path.exists(checkpoint_path):
-        print("Found existing checkpoint...")
+        print(f"Found existing checkpoint at {checkpoint_path}...")
         try:
-            net.load_state_dict(torch.load(checkpoint_path, map_location=device))
-            print("✅ Successfully loaded checkpoint!")
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+            net.load_state_dict(checkpoint["model_state"])
+            
+            # Restore Timeline
+            start_epoch = checkpoint.get("epoch", 0) + 1
+            global_step = checkpoint.get("global_step", 0)
+            
+            # Restore History & Stats
+            if "episode_history" in checkpoint:
+                episode_history = checkpoint["episode_history"]
+                print(f"✅ Loaded {len(episode_history)} historical episodes from checkpoint.")
+            
+            best_rank_found = checkpoint.get("best_rank_found", config["max_rank"])
+            total_successes = checkpoint.get("total_successes", 0)
+            
+            if "recent_episodes_list" in checkpoint:
+                recent_episodes = deque(checkpoint["recent_episodes_list"], maxlen=50)
+                recent_success_rate = sum(recent_episodes) / len(recent_episodes) if recent_episodes else 0.0
+            
+            if "wandb_run_id" in checkpoint:
+                config["resume_id"] = checkpoint["wandb_run_id"]
+            
+            print(f"✅ Successfully loaded checkpoint! Resuming at Epoch {start_epoch}, Step {global_step} (Best Rank: {best_rank_found})")
         except Exception as e:
             print(f"⚠️ Could not load checkpoint (architecture mismatch?): {e}")
             print("Starting with fresh weights instead.")
@@ -247,12 +270,9 @@ def train():
 
     print(f"✅ Replay Buffer initialized with {len(replay_buffer)} expert samples.")
 
-    # Initialize list for episode summaries
-    episode_history = []
-
-    global_step = 0
-    
-    init_logger(config)
+    wandb_run_id = init_logger(config)
+    if wandb_run_id:
+        print(f"🚀 Dashboard Linked (ID: {wandb_run_id})")
     
     # Define custom X-axes first
     wandb.define_metric("Epoch")
@@ -276,7 +296,7 @@ def train():
         print(f"Failed to start Visualizer Server: {e}")
 
     try:
-        for epoch in range(EPOCHS):
+        for epoch in range(start_epoch, EPOCHS):
             print(f"\n{'='*60}")
             print(f"--- Epoch {epoch+1}/{EPOCHS} ---")
             print(f"{'='*60}")
@@ -327,14 +347,15 @@ def train():
                 episode_reward = 0
                 valid_actions = 0
                 invalid_actions = 0
-                done = False
+                terminated = False
+                truncated = False
                 final_value = 0
 
                 global_episode_count = epoch * EPISODES_PER_EPOCH + episode + 1
                 print(f"  Starting Episode {global_episode_count} (Epoch {epoch+1})...", flush=True)
                 
                 # play one full game
-                while not done:
+                while not (terminated or truncated) and steps < project_config.MAX_STEPS:
                     # run MCTS to get the best action distribution
                     # add_noise=True during training for exploration
                     best_action, visit_counts = mcts.search(obs, return_probs=True, add_noise=True)
@@ -358,7 +379,6 @@ def train():
                     obs = next_obs
                     steps += 1
                     episode_reward += reward
-                    global_step += 1
                 
                     # Track valid/invalid actions
                     if info["action_valid"]:
@@ -430,21 +450,23 @@ def train():
 
 
                 # assign value (winner) to all steps in this episode
-                # if solved, value =1 else -1
+                # if solved, value = 1 else -1
 
-                # new reward structure: scaled final residual norm
-                res_norm = np.linalg.norm(obs)
+                # Use the environment provided residual norm which is more accurate
+                res_norm = info["residual_norm"]
                 sqrt8 = 8 ** 0.5
 
-                if res_norm <= sqrt8:
+                if terminated:
+                    final_value = 1.0
+                elif res_norm <= sqrt8:
                     final_value = 1 - res_norm / sqrt8
                 elif res_norm <= 6:
                     final_value = (sqrt8 - res_norm) / (6 - sqrt8)
                 else:
                     final_value = -1
 
-                # Track episode success
-                episode_solved = (res_norm <= sqrt8)
+                # Track episode success based on actual environment termination
+                episode_solved = terminated
                 recent_episodes.append(1 if episode_solved else 0)
                 recent_success_rate = sum(recent_episodes) / len(recent_episodes)
                 
@@ -491,7 +513,7 @@ def train():
                 data=episode_history
             )
             # Log only ONE table that accumulates all data to keep the UI clean
-            wandb.log({"episode_history": episode_table})
+            wandb.log({"episode_history": episode_table}, step=global_step)
             print(f"  📊 Updated cumulative episode_history table with {len(episode_history)} rows")
 
             # --- B. Training Phase (Network Update)--- once per Epoch ( after several episodes )
@@ -679,7 +701,20 @@ def train():
             if (epoch+1) % 10 == 0:
                 if not os.path.exists("checkpoints"):
                     os.makedirs("checkpoints")
-                torch.save(net.state_dict(), f"checkpoints/latest_model.pth")
+                
+                checkpoint = {
+                    "epoch": epoch,
+                    "global_step": global_step,
+                    "model_state": net.state_dict(),
+                    "optimizer_state": optimizer.state_dict(),
+                    "episode_history": episode_history,
+                    "best_rank_found": best_rank_found,
+                    "total_successes": total_successes,
+                    "recent_episodes_list": list(recent_episodes),
+                    "wandb_run_id": wandb_run_id,
+                }
+                torch.save(checkpoint, f"checkpoints/latest_model.pth")
+                print(f"💾 Full Session Checkpoint saved at Epoch {epoch+1}")
     finally:
         print("Stopping Visualizer Server...")
         viz.stop()

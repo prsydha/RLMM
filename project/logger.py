@@ -26,13 +26,19 @@ def init_logger(config, offline=False):
         }
         if "entity" in config:
             init_kwargs["entity"] = config["entity"]
-        wandb.init(**init_kwargs)
+        
+        # Support resuming a specific run if ID is provided
+        if config.get("resume_id"):
+            init_kwargs["id"] = config["resume_id"]
+            init_kwargs["resume"] = "allow"
+            
+        run = wandb.init(**init_kwargs)
         _wandb_enabled = True
-        logging.info("WandB initialized successfully")
+        return run.id if run else None
     except Exception as e:
         _wandb_enabled = False
         logging.warning(f"WandB init failed: {e}. Falling back to file logging only.")
-        logging.info("Tip: Run 'wandb login' to authenticate with your W&B account.")
+        return None
 
 
 def log_metrics(metrics, step=None):
