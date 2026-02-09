@@ -26,6 +26,7 @@ from models.deep_pv_network import DeepTensorNet
 from project.logger import init_logger, log_metrics
 import config as project_config
 from utils.warm_start import generate_demo_data
+from utils.encode_input import encode_state
 # from mlo.checkpoint import save_checkpoint
 
 # --- Hyperparameters ---
@@ -87,7 +88,7 @@ def compute_marginal_targets(visit_counts, n_heads=12, action_map=[-1, 0, 1]):
 
 def train():
     # 1. setup
-    device = torch.device(config["device"])
+    device = config["device"]
     print(f"Training on device: {device}")
 
     # initialize Environment, Network and Optimizer
@@ -182,7 +183,7 @@ def train():
     global_step = 0
 
     # initialzing MCTS agent outside epoch loop to retain learned tree structure
-    mcts = MCTSAgent(model = net, env = env, n_simulations=MCTS_SIMS, device=config["device"])
+    mcts = MCTSAgent(model = net, env = env, n_simulations=MCTS_SIMS, device=device)
 
     for epoch in range(EPOCHS):
         print(f"\n--- Epoch {epoch+1}/{EPOCHS} ---")
@@ -220,10 +221,10 @@ def train():
                 # compute visit marginals for training target
                 marginal_targets = compute_marginal_targets(visit_counts, n_heads=project_config.N_HEADS)
 
-                step_reward = calc_reward(obs)
+                # step_reward = calc_reward(obs)
 
-                # store data : (state, targets, result_placeholder, step_reward)
-                episode_data.append([obs.flatten(), marginal_targets,  step_reward]) # using dense reward
+                # store data : (state, targets, result_placeholder)
+                episode_data.append([obs.flatten(), marginal_targets]) # using dense reward
 
                 obs = next_obs
                 steps += 1
@@ -274,6 +275,8 @@ def train():
             # else:
             #     final_value = -1
 
+            final_value = 1.0 if terminated else -1.0
+
             print(f"  Episode {episode+1}: Steps={steps}, Result={final_value}")
 
             # --------------------
@@ -301,12 +304,16 @@ def train():
 
         # run a few updates on the buffer
         total_loss = 0
+        total_value_loss = 0
+        total_policy_loss = 0
+        
         for _ in range(10): # 10 gradient steps per epoch
             batch = random.sample(replay_buffer, BATCH_SIZE)
             states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
 
+            encoded_batch = np.array([encode_state(s) for s in states])
             # prepare tensors
-            states_tensor = torch.FloatTensor(np.array(states)).to(device) # shape (BATCH_SIZE, state_dim) # pytorch converts numpy array to tensor faster and more reliably than raw Python lists
+            states_tensor = torch.FloatTensor(encoded_batch).to(device) # shape (BATCH_SIZE, state_dim)
             values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device) # shape (BATCH_SIZE, 1)
 
             # targets_batch is shape(BATCH_SIZE, n_heads, 3)
@@ -363,7 +370,21 @@ def train():
             # It moves the value from GPU memory back to CPU memory.
 
         avg_loss = total_loss / 10 #
-        print(f"  Average Loss: {avg_loss:.4f}")
+        
+        print(f"  Average Loss: {avg_loss:.4f} ")
+
+        log_metrics({
+            "epoch_loss": avg_loss,
+        }, step=global_step)
+        
+        # # Log training metrics to wandb
+        # wandb.log({
+        #     "train/loss": avg_loss,
+        #     "train/value_loss": avg_value_loss,
+        #     "train/policy_loss": avg_policy_loss,
+        #     "epoch": epoch
+        # })
+
 
         # Save Checkpoint
         if (epoch+1) % 10 == 0:

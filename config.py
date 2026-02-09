@@ -10,4 +10,4 @@ MAX_STEPS = 10
 # --- Model Architecture ---
 HIDDEN_DIM = 256           # Number of neurons in hidden layers of the neural network ( increased from 256 to 512 for better capacity )
 N_HEADS = 3 * VECTOR_LEN    #  3 vectors * 4 entries = 12 heads
-INPUT_DIM = TENSOR_DIM      # 64 (residual tensor)
+INPUT_DIM = TENSOR_DIM * 3      # 64 (residual tensor)

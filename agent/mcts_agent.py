@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import math
 from utils.tree_node import TreeNode
+from utils.encode_input import encode_state
 
 VIRTUAL_LOSS = 3.0
 
@@ -112,9 +113,11 @@ class MCTSAgent:
             node.is_terminal = True # mark as terminal to avoid re-evaluation
             return 1.0 # solved!
         
+        encoded = encode_state(node.state)
+        
          # prepare state for network
          # standard "Dense" (linear) layers in neural networks expect a flat vector as input
-        state_tensor = torch.FloatTensor(node.state.flatten()).unsqueeze(0).to(self.device) # flatten the multidim array, convert to a PyTorch tensor with high-precision decimals to calculate gradients, add fake batch dimension, move to device( gpu or cpu)
+        state_tensor = torch.FloatTensor(encoded).unsqueeze(0).to(self.device) # flatten the multidim array, convert to a PyTorch tensor with high-precision decimals to calculate gradients, add fake batch dimension, move to device( gpu or cpu)
 
         with torch.no_grad(): # disable gradient calculation for inference
             policy_logits, value = self.model(state_tensor)

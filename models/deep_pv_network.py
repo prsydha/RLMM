@@ -29,8 +29,10 @@ class ResBlock(nn.Module):
         return F.gelu(out)
 
 class DeepTensorNet(nn.Module):
-    def __init__(self, input_dim=config.INPUT_DIM, hidden_dim=512, num_res_blocks=6):
+    def __init__(self, input_dim=config.INPUT_DIM, hidden_dim=512, num_res_blocks=6, n_heads=config.N_HEADS):
         super().__init__()
+        
+        self.n_heads = n_heads
         
         # 1. Input Projection
         # We assume input is the flattened tensor.
@@ -46,14 +48,16 @@ class DeepTensorNet(nn.Module):
             *[ResBlock(hidden_dim) for _ in range(num_res_blocks)]
         )
         
-        # 3. Policy Head
-        # Output is 12 indices (for 2x2) with 3 possibilities each (-1, 0, 1)
-        self.policy_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, 12 * 3) # Raw logits for cross-entropy
-        )
+        # 3. Policy Head - Split into N_HEADS separate linear layers
+        # Each head outputs 3 possibilities (-1, 0, 1)
+        self.policy_heads = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.GELU(),
+                nn.Linear(hidden_dim, 3) # 3 actions: -1, 0, 1
+            ) for _ in range(n_heads)
+        ])
         
         # 4. Value Head
         self.value_head = nn.Sequential(
@@ -70,7 +74,8 @@ class DeepTensorNet(nn.Module):
         x = self.backbone(x)
             
         # Heads
-        policy_logits = self.policy_head(x)
+        # Return a list of tensors, one for each head
+        policy_logits = [head(x) for head in self.policy_heads]
         value = self.value_head(x)
         
         return policy_logits, value
