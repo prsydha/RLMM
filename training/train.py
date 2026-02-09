@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
-from models.pv_network import PolicyValueNet
+from models.resnet_pv_network import PolicyValueNet
 from project.logger import init_logger, log_metrics
 import config as project_config
 from utils.warm_start import generate_demo_data

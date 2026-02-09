@@ -25,6 +25,7 @@ CPUCT = 3.0                 # Higher exploration constant
 DIRICHLET_ALPHA = 0.6       # More uniform noise (encourages trying new actions)
 DIRICHLET_EPSILON = 0.5     # 50% noise, 50% policy - high exploration
 
+
 # --- Exploration Settings ---
 EPSILON_GREEDY = 0.20       # 20% chance of random action during training
 EFFICIENCY_BONUS = 5.0      # Strong bonus multiplier for finding fewer-step solutions

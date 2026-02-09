@@ -9,7 +9,7 @@ from collections import deque
 # Import our project modules
 import config
 from env_tmp.matrix_env import MatrixTensorEnv
-from models.pv_network import PolicyValueNet
+from models.resnet_pv_network import PolicyValueNet
 from agent.mcts_agent import MCTSAgent
 
 # --- Hyperparameters ---

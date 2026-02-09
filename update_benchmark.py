@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
-from models.pv_network import PolicyValueNet
+from models.resnet_pv_network import PolicyValueNet
 from mlo.checkpoint import load_checkpoint
 
 # Fix for CuPy/CUDA DLL error on Windows
