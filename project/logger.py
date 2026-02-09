@@ -27,6 +27,12 @@ def init_logger(config, offline=False):
         if "entity" in config:
             init_kwargs["entity"] = config["entity"]
         wandb.init(**init_kwargs)
+
+        wandb.define_metric("step/*", step_metric="global_step")
+        wandb.define_metric("episode/*", step_metric="episode_step")
+        wandb.define_metric("epoch/*", step_metric="epoch_step")
+        wandb.define_metric("eval/*", step_metric="eval_step")
+
         _wandb_enabled = True
         logging.info("WandB initialized successfully")
     except Exception as e:
@@ -36,6 +42,8 @@ def init_logger(config, offline=False):
 
 
 def log_metrics(metrics, step=None):
+    # if step is None:
+    #     raise ValueError("wandb.log called without a step -- this breaks step ordering")
     global _wandb_enabled
     
     if _wandb_enabled:
