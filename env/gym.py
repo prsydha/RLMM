@@ -206,7 +206,7 @@ class TensorDecompositionEnv(gym.Env):
 
         # Combine
 
-        return self.residual_tensor
+        return self.residual_tensor.astype(np.float32)
 
     def _calculate_reward(
             self,
