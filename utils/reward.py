@@ -1,6 +1,6 @@
 import numpy as np
 
-# Scaled Progress reward
+# Scaled Final Residual Norm reward
 def calc_reward(obs):
     norm = np.linalg.norm(obs)
     sqrt8 = 8 ** 0.5

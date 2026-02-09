@@ -5,7 +5,7 @@ VECTOR_LEN = MATRIX_SIZE ** 2   # 4
 TENSOR_DIM = VECTOR_LEN ** 3    # 64
 
 # Full exploration: allow up to 20 rank-1 tensors
-MAX_STEPS = 20                  # Extended from 10 to allow full exploration
+MAX_STEPS = 10                  # Extended from 10 to allow full exploration
 
 # --- Model Architecture ---
 HIDDEN_DIM = 512           # Increased for better capacity (was 256)
@@ -17,11 +17,11 @@ LEARNING_RATE = 1e-4        # Lower LR for more stable exploration
 BATCH_SIZE = 128            # Larger batch for better gradient estimates
 REPLAY_BUFFER_SIZE = 20000  # Larger buffer to store diverse solutions
 EPOCHS = 200                # More epochs for exploration
-EPISODES_PER_EPOCH = 15     # More episodes per epoch
-MCTS_SIMS = 150             # Slightly more simulations for better search
+EPISODES_PER_EPOCH = 10     # More episodes per epoch
+MCTS_SIMS = 350             # Slightly more simulations for better search
 
 # --- MCTS Settings ---
-CPUCT = 3.0                 # Higher exploration constant
+CPUCT = 2.0                 # Higher exploration constant
 DIRICHLET_ALPHA = 0.6       # More uniform noise (encourages trying new actions)
 DIRICHLET_EPSILON = 0.5     # 50% noise, 50% policy - high exploration
 

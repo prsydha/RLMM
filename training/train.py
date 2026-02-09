@@ -19,6 +19,7 @@ from project.logger import init_logger, log_metrics
 import config as project_config
 from utils.warm_start import generate_demo_data
 from training.visualizer_server import VisualizerServer
+from utils.reward import reward_func
 # from mlo.checkpoint import save_checkpoint
 
 # --- Hyperparameters (now from config) ---
