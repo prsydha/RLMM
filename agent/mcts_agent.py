@@ -164,7 +164,7 @@ class MCTSAgent:
         """
         sampled_results = []
         # convert logits to probabilities using softmax (shape: [batch=1, num_actions])
-        probs = [torch.softmax(l, dim = 1) for l in logits]
+        probs = [torch.softmax(l, dim = -1) for l in logits]
 
         # Determine vector length (4 for 2x2, 9 for 3x3)
         L = len(logits) // 3

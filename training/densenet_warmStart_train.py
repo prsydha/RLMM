@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
 from models.pv_network import PolicyValueNet
+from models.pv_network_resnet import DeepTensorNet
 from project.logger import init_logger, log_metrics
 import config as project_config
 from utils.warm_start import generate_demo_data
@@ -29,25 +30,24 @@ from utils.warm_start import generate_demo_data
 # from mlo.checkpoint import save_checkpoint
 
 # --- Hyperparameters ---
-# --- Hyperparameters ---
-LEARNING_RATE = 3e-4
-BATCH_SIZE = 64
-REPLAY_BUFFER_SIZE = 20000 # 20000 overnight
-EPOCHS = 1000         # Total training loops - 500 (more for more training) because optimization is per epoch, not per episode
-EPISODES_PER_EPOCH = 10  # Self-play games per loop - 20 (less better)- to know: in what way does this influence learning
-MCTS_SIMS = 600       # Search depth per move - 300/400
+LEARNING_RATE = 1e-3
+BATCH_SIZE = 32
+REPLAY_BUFFER_SIZE = 8000
+EPOCHS = 100         # Total training loops
+EPISODES_PER_EPOCH = 10  # Self-play games per loop
+MCTS_SIMS = 500       # Search depth per move
 
 config = {
-    "run_name": "alphatensor_mcts_v1",
+    "run_name": "alphatensor_mcts_warm_dense",
     "matrix_size": (2, 2, 2),
-    "max_rank": 15,
+    "max_rank": 7,
     "learning rate": LEARNING_RATE,
     "batch_size": BATCH_SIZE,
     "replay_buffer_size": REPLAY_BUFFER_SIZE,
     "epochs": EPOCHS,
     "episodes_per_epoch": EPISODES_PER_EPOCH,
     "mcts_simulations": MCTS_SIMS,
-    "checkpoint_interval": 20,
+    "checkpoint_interval": 10,
     "device": "cpu"  # "cuda" if torch.cuda.is_available() else "cpu"
 }
 
@@ -96,7 +96,7 @@ def train():
     env = TensorDecompositionEnv(matrix_size=config["matrix_size"], max_rank=config["max_rank"])
 
     net = PolicyValueNet().to(device)
-    checkpoint_path = "checkpoints/latest_model.pth"
+    checkpoint_path = "checkpoints/dense/latest_model.pth"
 
     # Check if a saved model already exists
     if os.path.exists(checkpoint_path):
@@ -110,69 +110,69 @@ def train():
     # Replay Buffer: Stores (state, mcts_probs, winner)
     replay_buffer = deque(maxlen=REPLAY_BUFFER_SIZE)  # use deque for efficient pops from left(front)
 
-    # # Warm Start with Demo Data
-    # # inject the solution 50 times so the buffer is full of "winning" examples
-    # demo_data = generate_demo_data(env)
-    # for _ in range(15):
-    #     replay_buffer.extend(demo_data)
+    # Warm Start with Demo Data
+    # inject the solution 50 times so the buffer is full of "winning" examples
+    demo_data = generate_demo_data(env)
+    for _ in range(15):
+        replay_buffer.extend(demo_data)
 
-    # print(f"Replay Buffer initialized with {len(replay_buffer)} expert samples.")
+    print(f"Replay Buffer initialized with {len(replay_buffer)} expert samples.")
 
-    # # pre-train the network on this data before starting MCTS
-    # print("Pre-training Network on expert data...")
-    # net.train()
-    # for step in range(5): # 5 gradient steps
-    #     # copying the main training loop below
-    #     batch = random.sample(replay_buffer, BATCH_SIZE)
-    #     states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
+    # pre-train the network on this data before starting MCTS
+    print("Pre-training Network on expert data...")
+    net.train()
+    for step in range(5): # 5 gradient steps
+        # copying the main training loop below
+        batch = random.sample(replay_buffer, BATCH_SIZE)
+        states, target_dists, values = zip(*batch) # unpacking batch and pairing up first elements, second elements, etc. together as lists , which returns 3 tuples
 
-    #     # prepare tensors
-    #     states_tensor = torch.FloatTensor(np.array(states)).to(device) # shape (BATCH_SIZE, state_dim) # pytorch converts numpy array to tensor faster and more reliably than raw Python lists
-    #     values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device) # shape (BATCH_SIZE, 1)
+        # prepare tensors
+        states_tensor = torch.FloatTensor(np.array(states)).to(device) # shape (BATCH_SIZE, state_dim) # pytorch converts numpy array to tensor faster and more reliably than raw Python lists
+        values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device) # shape (BATCH_SIZE, 1)
 
-    #     # targets_batch is shape(BATCH_SIZE, n_heads, 3)
-    #     targets_batch = torch.stack(list(target_dists)).to(device)
+        # targets_batch is shape(BATCH_SIZE, n_heads, 3)
+        targets_batch = torch.stack(list(target_dists)).to(device)
 
-    #     # forward pass
-    #     policy_logits, value_pred = net(states_tensor)
+        # forward pass
+        policy_logits, value_pred = net(states_tensor)
 
-    #     # We need to train the network on two losses:
-    #     # Policy Loss: The network's "intuition" (probabilities) should match the "reality" (MCTS visit counts).
-    #     # Value Loss: The network's predicted score should match the final result (Solved/Not Solved).
+        # We need to train the network on two losses:
+        # Policy Loss: The network's "intuition" (probabilities) should match the "reality" (MCTS visit counts).
+        # Value Loss: The network's predicted score should match the final result (Solved/Not Solved).
 
-    #     # 1. Value Loss (MSE) : did we predict the win/loss correctly?
-    #     value_loss = F.mse_loss(value_pred, values_tensor) # functional mse loss
+        # 1. Value Loss (MSE) : did we predict the win/loss correctly?
+        value_loss = F.mse_loss(value_pred, values_tensor) # functional mse loss
 
-    #     # 2. Policy Loss (cross-entropy) : did we pick the right integers?
-    #     # we must split the 'actions' tuple (batch of 12/27 ints) into separate targets for each head
-    #     # actions is a list of tuples: [(1, 0, -1, ...), (...), ...]
-    #     # convert to tensor : (batch_size, 12/27)
-    #     # action_targets = torch.LongTensor(actions).to(device) # LongTensor for integer targets
-    #     # # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
-    #     # action_targets = action_targets + 1
+        # 2. Policy Loss (cross-entropy) : did we pick the right integers?
+        # we must split the 'actions' tuple (batch of 12/27 ints) into separate targets for each head
+        # actions is a list of tuples: [(1, 0, -1, ...), (...), ...]
+        # convert to tensor : (batch_size, 12/27)
+        # action_targets = torch.LongTensor(actions).to(device) # LongTensor for integer targets
+        # # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
+        # action_targets = action_targets + 1
 
-    #     # policy loss with soft targets (KL Divergence)
-    #     # we treat each head independently
-    #     policy_loss = 0
+        # policy loss with soft targets (KL Divergence)
+        # we treat each head independently
+        policy_loss = 0
 
-    #     for i in range(len(policy_logits)):
-    #         # network output: Logits -> LogSoftmax for KLDiv, shape: (batch_size, 3)
-    #         pred_log_probs = F.log_softmax(policy_logits[i], dim=1)
+        for i in range(len(policy_logits)):
+            # network output: Logits -> LogSoftmax for KLDiv, shape: (batch_size, 3)
+            pred_log_probs = F.log_softmax(policy_logits[i], dim=1)
 
-    #         # target : probability distribution
-    #         # shape : (batch_size, 3)
-    #         target_probs = targets_batch[:, i, :]
+            # target : probability distribution
+            # shape : (batch_size, 3)
+            target_probs = targets_batch[:, i, :]
 
-    #         # KLDivLoss(input = log_probs, target = probs)
-    #         # "batchmean" sums over classes and averages over batch
-    #         policy_loss += F.kl_div(pred_log_probs, target_probs, reduction='batchmean')
+            # KLDivLoss(input = log_probs, target = probs)
+            # "batchmean" sums over classes and averages over batch
+            policy_loss += F.kl_div(pred_log_probs, target_probs, reduction='batchmean')
 
-    #     # combine losses
-    #     loss = value_loss + policy_loss
+        # combine losses
+        loss = value_loss + policy_loss
 
-    #     optimizer.zero_grad() # clear previous gradients becuase by default, PyTorch accumulates gradients
-    #     loss.backward()       # backpropagate to compute gradients
-    #     optimizer.step()      # update weights
+        optimizer.zero_grad() # clear previous gradients becuase by default, PyTorch accumulates gradients
+        loss.backward()       # backpropagate to compute gradients
+        optimizer.step()      # update weights
 
     # --------------------
     # 2. Main Training Loop
@@ -342,15 +342,19 @@ def train():
             # It disconnects it from the computational graph.
             # It moves the value from GPU memory back to CPU memory.
 
-        avg_loss = total_loss / 10  #
+        avg_loss = total_loss / 10
         print(f"  Average Loss: {avg_loss:.4f}")
+
+        log_metrics({
+            "epoch_loss": avg_loss
+        }, step=global_step)
 
         # Save Checkpoint
         if (epoch + 1) % 10 == 0:
-            if not os.path.exists("checkpoints"):
-                os.makedirs("checkpoints")
-            torch.save(net.state_dict(), f"checkpoints/model_epoch_{epoch + 1}.pth")
-            torch.save(net.state_dict(), f"checkpoints/latest_model.pth")
+            if not os.path.exists("checkpoints/dense"):
+                os.makedirs("checkpoints/dense")
+            torch.save(net.state_dict(), f"checkpoints/dense/model_epoch_{epoch + 1}.pth")
+            torch.save(net.state_dict(), f"checkpoints/dense/latest_model.pth")
             print(f"Checkpoint saved!")
 
 
