@@ -46,8 +46,8 @@ class MCTSAgent:
             return default_action
         
         # Add Dirichlet noise to root for exploration during training
-        if add_noise and root.children:
-            self._add_dirichlet_noise(root)
+        # if add_noise and root.children:
+        #     self._add_dirichlet_noise(root)
 
         # 2. simulation loop
         for sim_idx in range(self.n_simulations):
@@ -76,10 +76,10 @@ class MCTSAgent:
         
         # 3. select best move (greedy with respect to visit count)
         # Epsilon-greedy: occasionally pick a random action to encourage exploration
-        if add_noise and random.random() < self.epsilon_greedy:
-            # Random action from children
-            best_action = random.choice(list(root.children.keys()))
-        else:
+        # if add_noise and random.random() < self.epsilon_greedy:
+        #     # Random action from children
+        #     best_action = random.choice(list(root.children.keys()))
+        # else:
             # Greedy: pick action with most visits
             best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
 
@@ -247,7 +247,7 @@ class MCTSAgent:
         sampled_results = []
         
         # Apply temperature to logits before softmax for exploration control
-        temp = max(0.1, self.temperature)
+        temp = 1 #max(0.1, self.temperature)
         probs = [torch.softmax(l / temp, dim=1) for l in logits]
 
         # Determine vector length (4 for 2x2, 9 for 3x3)

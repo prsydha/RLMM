@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
-from models.resnet_pv_network import PolicyValueNet
+from models.linear_pv_network import PolicyValueNet
 from project.logger import init_logger, log_metrics
 import config as project_config
 from utils.warm_start import generate_demo_data
@@ -220,22 +220,22 @@ def train():
     # WARM START WITH EXPERT DEMONSTRATIONS
     # This is CRITICAL for learning to work!
     # ============================================
-    print("\n" + "="*60)
-    print("INITIALIZING WARM START WITH EXPERT DEMONSTRATIONS")
-    print("="*60)
+    # print("\n" + "="*60)
+    # print("INITIALIZING WARM START WITH EXPERT DEMONSTRATIONS")
+    # print("="*60)
     
-    demo_data = generate_demo_data(env)
-    # Convert demo data format: (state, target, value) -> (state, target, value, is_success)
-    demo_with_success = [(s, t, v, True) for s, t, v in demo_data]
+    # demo_data = generate_demo_data(env)
+    # # Convert demo data format: (state, target, value) -> (state, target, value, is_success)
+    # demo_with_success = [(s, t, v, True) for s, t, v in demo_data]
     
-    # Inject expert demonstrations multiple times
-    for _ in range(project_config.WARM_START_COPIES):
-        replay_buffer.extend(demo_with_success)
+    # # Inject expert demonstrations multiple times
+    # for _ in range(project_config.WARM_START_COPIES):
+    #     replay_buffer.extend(demo_with_success)
 
-    print(f"✅ Replay Buffer initialized with {len(replay_buffer)} expert samples.")
+    # print(f"✅ Replay Buffer initialized with {len(replay_buffer)} expert samples.")
 
-    # Pre-train the network on expert data before starting MCTS
-    pretrain_on_expert(net, replay_buffer, device, optimizer, steps=project_config.PRE_TRAIN_STEPS)
+    # # Pre-train the network on expert data before starting MCTS
+    # pretrain_on_expert(net, replay_buffer, device, optimizer, steps=project_config.PRE_TRAIN_STEPS)
 
     # --------------------
     # 2. Main Training Loop
@@ -260,32 +260,32 @@ def train():
         
             # Calculate exploration parameters - maintain high exploration longer
             # For full exploration (up to 20 ranks), we need sustained exploration
-            progress = epoch / EPOCHS
+            # progress = epoch / EPOCHS
             
             # Temperature: high early (1.5) -> moderate late (0.5)
-            temperature = max(0.5, 1.5 - progress * 1.0)
+            # temperature = max(0.5, 1.5 - progress * 1.0)
             
             # Epsilon for random action: stays high longer for more exploration
             # High early (30%), moderate mid (15%), low late (5%)
-            if progress < 0.3:
-                eps_greedy = 0.30  # First 30% of training: heavy exploration
-            elif progress < 0.7:
-                eps_greedy = 0.20  # Middle 40%: moderate exploration  
-            else:
-                eps_greedy = max(0.05, 0.15 - (progress - 0.7) * 0.33)  # Final 30%: exploitation
+            # if progress < 0.3:
+            #     eps_greedy = 0.30  # First 30% of training: heavy exploration
+            # elif progress < 0.7:
+            #     eps_greedy = 0.20  # Middle 40%: moderate exploration  
+            # else:
+            #     eps_greedy = max(0.05, 0.15 - (progress - 0.7) * 0.33)  # Final 30%: exploitation
         
-            # If stuck at 8 steps for many epochs, boost exploration significantly
-            if best_rank_found >= 8 and epoch > 30:
-                eps_greedy = min(0.40, eps_greedy + 0.15)
-                temperature = min(2.0, temperature + 0.5)
-                print(f"⚠️ Still at {best_rank_found} steps after {epoch} epochs - BOOSTING exploration!")
-            elif best_rank_found == 7 and epoch > 50:
-                # Found Strassen! Now try to find even better (6 step?)
-                eps_greedy = min(0.35, eps_greedy + 0.10)
-                print(f"✅ Found 7-step! Trying to find 6-step solution...")
+            # # If stuck at 8 steps for many epochs, boost exploration significantly
+            # if best_rank_found >= 8 and epoch > 30:
+            #     eps_greedy = min(0.40, eps_greedy + 0.15)
+            #     temperature = min(2.0, temperature + 0.5)
+            #     print(f"⚠️ Still at {best_rank_found} steps after {epoch} epochs - BOOSTING exploration!")
+            # elif best_rank_found == 7 and epoch > 50:
+            #     # Found Strassen! Now try to find even better (6 step?)
+            #     eps_greedy = min(0.35, eps_greedy + 0.10)
+            #     print(f"✅ Found 7-step! Trying to find 6-step solution...")
         
-            print(f"Temperature: {temperature:.3f}, Epsilon-greedy: {eps_greedy:.3f}, Best rank: {best_rank_found}")
-            print(f"Max allowed steps: {config['max_rank']}")
+            # print(f"Temperature: {temperature:.3f}, Epsilon-greedy: {eps_greedy:.3f}, Best rank: {best_rank_found}")
+            # print(f"Max allowed steps: {config['max_rank']}")
 
             # --- A. Self-Play Phase (Data Collection) ---
             net.eval() # Set to evaluation mode for inference
@@ -296,8 +296,7 @@ def train():
                 obs, info = env.reset()
                 # Create fresh MCTS for each episode with current exploration params
                 mcts = MCTSAgent(model=net, env=env, n_simulations=MCTS_SIMS, 
-                                device=config["device"], temperature=temperature,
-                                epsilon_greedy=eps_greedy)
+                                device=config["device"])
 
                 episode_data = [] # Stores (state, action_dist) for this game
                 steps = 0
@@ -306,6 +305,7 @@ def train():
                 invalid_actions = 0
                 done = False
                 final_value = 0
+                terminated = False
 
                 print(f"  Starting Episode {episode+1}...", flush=True)
                 
@@ -418,16 +418,9 @@ def train():
                 # assign value (winner) to all steps in this episode
                 # if solved, value =1 else -1
 
-                # new reward structure: scaled final residual norm
                 res_norm = np.linalg.norm(obs)
-                sqrt8 = 8 ** 0.5
 
-                if res_norm <= sqrt8:
-                    final_value = 1 - res_norm / sqrt8
-                elif res_norm <= 6:
-                    final_value = (sqrt8 - res_norm) / (6 - sqrt8)
-                else:
-                    final_value = -1
+                final_value = reward_func(terminated)
 
                 # Track episode success
                 episode_solved = (res_norm <= sqrt8)
@@ -541,6 +534,7 @@ def train():
             avg_loss = total_loss / n_train_steps
             avg_value_loss = total_value_loss / n_train_steps
             avg_policy_loss = total_policy_loss / n_train_steps
+
             current_lr = optimizer.param_groups[0]['lr']
         
             print(f"  Average Loss: {avg_loss:.4f} (Value: {avg_value_loss:.4f}, Policy: {avg_policy_loss:.4f})")
@@ -581,8 +575,8 @@ def train():
                 "total_successes": total_successes,
                 "success_rate": recent_success_rate,
                 "best_rank": best_rank_found,
-                "temperature": temperature,
-                "epsilon": eps_greedy
+                # "temperature": temperature,
+                # "epsilon": eps_greedy
             })
         
             # Log epoch metrics
@@ -593,8 +587,8 @@ def train():
                 "learning_rate": current_lr,
                 "replay_buffer_size": len(replay_buffer),
                 "best_rank_found": best_rank_found,
-                "temperature": temperature,
-                "epsilon": eps_greedy,
+                # "temperature": temperature,
+                # "epsilon": eps_greedy,
                 "epoch_successes": epoch_successes,
                 "total_successes": total_successes,
                 "success_rate": recent_success_rate
