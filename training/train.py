@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import random
 from collections import deque
 import subprocess
+import wandb
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -121,7 +122,7 @@ def compute_marginal_targets(visit_counts, n_heads=12, action_map=[-1, 0, 1]):
     return targets
 
 
-def pretrain_on_expert(net, replay_buffer, device, optimizer, steps=50):
+def pretrain_on_expert(net, replay_buffer, device, optimizer, steps=50, global_step=0):
     """Pre-train the network on expert demonstrations."""
     print(f"\n{'='*50}")
     print("Pre-training on expert demonstrations...")
@@ -160,9 +161,20 @@ def pretrain_on_expert(net, replay_buffer, device, optimizer, steps=50):
         
         if step % 10 == 0:
             print(f"  Pre-train step {step}/{steps}: Loss={loss.item():.4f} (V={value_loss.item():.4f}, P={policy_loss.item():.4f})")
+        
+        # Log pre-training to wandb using global_step (Every step for visibility)
+            wandb.log({
+                "Core/pretrain_step": step,
+                "Core/pretrain_total_loss": loss.item(),
+                "Core/pretrain_value_loss": value_loss.item(),
+                "Core/pretrain_policy_loss": policy_loss.item()
+            }, step=global_step)
+        
+        global_step += 1
     
     print("Pre-training complete!")
     print(f"{'='*50}\n")
+    return global_step
 
 
 def train():
@@ -235,16 +247,21 @@ def train():
 
     print(f"✅ Replay Buffer initialized with {len(replay_buffer)} expert samples.")
 
-    # Pre-train the network on expert data before starting MCTS
-    pretrain_on_expert(net, replay_buffer, device, optimizer, steps=project_config.PRE_TRAIN_STEPS)
-
-    # --------------------
-    # 2. Main Training Loop
-    # --------------------
-
-    init_logger(config)
+    # Initialize list for episode summaries
+    episode_history = []
 
     global_step = 0
+    
+    init_logger(config)
+    
+    # Synchronize WandB axes: Core to Epoch, Episode to Game Count
+    wandb.define_metric("Core/*", step_metric="Epoch")
+    wandb.define_metric("Episode/*", step_metric="global_episode_count")
+    wandb.define_metric("Core/pretrain_*", step_metric="Core/pretrain_step")
+    
+    # Pre-train the network on expert data before starting MCTS
+    global_step = pretrain_on_expert(net, replay_buffer, device, optimizer, steps=project_config.PRE_TRAIN_STEPS, global_step=global_step)
+    wandb.define_metric("Stats/eval_*", step_metric="Epoch")
     
     # Start Visualizer Server
     viz = VisualizerServer()
@@ -308,7 +325,8 @@ def train():
                 done = False
                 final_value = 0
 
-                print(f"  Starting Episode {episode+1}...", flush=True)
+                global_episode_count = epoch * EPISODES_PER_EPOCH + episode + 1
+                print(f"  Starting Episode {global_episode_count} (Epoch {epoch+1})...", flush=True)
                 
                 # play one full game
                 while not done:
@@ -349,18 +367,6 @@ def train():
                         np.sum(w == 0)
                     ) / (len(u) + len(v) + len(w))
                 
-                    # --------------------
-                    # Log step metrics
-                    # --------------------
-                    log_metrics({
-                    "episode_reward": final_value,
-                    "residual_norm": info["residual_norm"],
-                    "rank_used": info["rank_used"],
-                    "action_valid": int(info["action_valid"]),
-                    "action_sparsity": action_sparsity,
-                    "action": action
-                    }, step=global_step)
-                
                     # Calculate live reward/status for visualization
                     curr_norm = info["residual_norm"]
                     sqrt8 = 8 ** 0.5
@@ -375,6 +381,19 @@ def train():
                         current_val = -1
                         decision_status = "SEARCHING"
 
+                    # --------------------
+                    # Log step metrics
+                    # --------------------
+                    global_step += 1
+                    log_metrics({
+                        "Step/reward": current_val,
+                        "Step/residual_norm": info["residual_norm"],
+                        "Step/rank_used": info["rank_used"],
+                        "Step/action_valid": int(info["action_valid"]),
+                        "Step/action_sparsity": action_sparsity,
+                        "Stats/action": action
+                    }, step=global_step)
+                
                     # Broadcast to Visualizer
                     viz.broadcast({
                         "type": "step",
@@ -392,29 +411,18 @@ def train():
                     })
 
                     print(
-                    f"Episode {episode:03d} | "
-                    f"Reward: {current_val:7.2f} | "
-                    f"Rank: {info['rank_used']} | "
-                    f"Residual: {info['residual_norm']:.4e} | "
-                    f"Action: {action} | "
-                    f"Steps: {steps} | "
-                    f"Observation residual: {np.linalg.norm(obs):.2f} | "
+                        f"  Step {steps:02d} [Ep {global_episode_count}] | "
+                        f"Reward: {current_val:6.2f} | "
+                        f"Rank: {info['rank_used']} | "
+                        f"Residual: {info['residual_norm']:.4f}"
                     )
                 
                 # end of one episode
 
                 # --------------------
-                # Episode summary table
+                # Episode summary table partially removed (merged below)
                 # --------------------
-                import wandb
-                table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank"])
-                table.add_data(
-                    episode,
-                    reward,
-                    info["residual_norm"],
-                    info["rank_used"]
-                )
-                wandb.log({"episode_summary": table})
+
 
                 # assign value (winner) to all steps in this episode
                 # if solved, value =1 else -1
@@ -438,28 +446,48 @@ def train():
                 if episode_solved:
                     epoch_successes += 1
                     total_successes += 1
-                    print(f"  ✅ Episode {episode+1} SOLVED: Steps={steps}, Rank={info['rank_used']}, Residual={res_norm:.4e}")
+                    print(f"  ✅ Episode {global_episode_count} SOLVED: Steps={steps}, Rank={info['rank_used']}, Residual={res_norm:.4e}")
                 else:
-                    print(f"  ❌ Episode {episode+1} FAILED: Steps={steps}, Result={final_value:.3f}, Residual={res_norm:.4e}")
+                    print(f"  ❌ Episode {global_episode_count} FAILED: Steps={steps}, Result={final_value:.3f}, Residual={res_norm:.4e}")
 
-                # --------------------
-                # Episode summary table
-                # --------------------
-                import wandb
-                table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank", "Solved"])
-                table.add_data(
-                    episode,
+                global_episode_count = epoch * EPISODES_PER_EPOCH + episode + 1
+                episode_history.append([
+                    global_episode_count,
+                    epoch + 1,
+                    episode + 1,
                     final_value,
-                    info["residual_norm"],
+                    res_norm,  # Use calculated res_norm instead of info["residual_norm"]
                     info["rank_used"],
+                    steps,
                     episode_solved
-                )
-                wandb.log({"episode_summary": table})
+                ])
+                print(f"  📝 Logged to history: Episode={global_episode_count}, Reward={final_value:.3f}, Residual={res_norm:.4f}, Rank={info['rank_used']}, Steps={steps}")
+                
+                # Log individual episode metrics as scalars (Grouped by Game)
+                global_step += 1
+                wandb.log({
+                    "global_episode_count": global_episode_count,
+                    "Episode/reward": final_value,
+                    "Episode/residual_norm": res_norm,
+                    "Episode/rank_used": info["rank_used"],
+                    "Episode/steps": steps,
+                    "Episode/solved": int(episode_solved),
+                    "Episode/success_rate": recent_success_rate
+                }, step=global_step)
 
                 # Store episode data with success flag for prioritized replay
                 for data in episode_data:
                     state_flat, policy_target = data
                     replay_buffer.append((state_flat, policy_target, final_value, episode_solved))
+
+            # Log the full episode table ONCE per epoch
+            episode_table = wandb.Table(
+                columns=["Global Episode", "Epoch", "Episode", "Reward", "Residual", "Rank", "Steps", "Solved"],
+                data=episode_history
+            )
+            # Log only ONE table that accumulates all data to keep the UI clean
+            wandb.log({"episode_history": episode_table})
+            print(f"  📊 Updated cumulative episode_history table with {len(episode_history)} rows")
 
             # --- B. Training Phase (Network Update)--- once per Epoch ( after several episodes )
 
@@ -586,20 +614,23 @@ def train():
                 "epsilon": eps_greedy
             })
         
-            # Log epoch metrics
+            # Log epoch metrics against the custom "Epoch" step AND global_step to keep monotonicity
+            global_step += 1
             log_metrics({
-                "epoch_loss": avg_loss,
-                "epoch_value_loss": avg_value_loss,
-                "epoch_policy_loss": avg_policy_loss,
-                "learning_rate": current_lr,
-                "replay_buffer_size": len(replay_buffer),
-                "best_rank_found": best_rank_found,
-                "temperature": temperature,
-                "epsilon": eps_greedy,
-                "epoch_successes": epoch_successes,
-                "total_successes": total_successes,
-                "success_rate": recent_success_rate
-            }, step=epoch)
+                "Epoch": epoch,  # The x-axis for Core metrics
+                "Core/epoch_loss": avg_loss,
+                "Core/epoch_value_loss": avg_value_loss,
+                "Core/epoch_policy_loss": avg_policy_loss,
+                "Core/epoch_successes": epoch_successes,
+                "Stats/learning_rate": current_lr,
+                "Stats/batch_size": project_config.BATCH_SIZE,
+                "Stats/replay_buffer_size": len(replay_buffer),
+                "Stats/best_rank_found": best_rank_found,
+                "Stats/temperature": temperature,
+                "Stats/epsilon": eps_greedy,
+                "Stats/total_successes": total_successes,
+                "Stats/success_rate": recent_success_rate
+            }, step=global_step)
         
             # Step learning rate scheduler
             scheduler.step()
@@ -633,11 +664,12 @@ def train():
                     epochs_without_improvement += 1
                 
                 log_metrics({
+                    "Epoch": epoch,
                     "eval_steps": eval_steps,
                     "eval_rank": eval_info['rank_used'],
                     "eval_residual": eval_info['residual_norm'],
                     "eval_success": int(eval_terminated)
-                }, step=epoch)
+                })
         
             # Save Checkpoint
             if (epoch+1) % 10 == 0:
