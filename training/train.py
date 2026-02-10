@@ -393,22 +393,23 @@ def train():
                     ) / (len(u) + len(v) + len(w))
                 
                     # Calculate live reward/status for visualization
+                    # Calculate current value for logging
                     curr_norm = info["residual_norm"]
                     sqrt8 = 8 ** 0.5
-                    
-                    if curr_norm <= sqrt8:
+                    if curr_norm < 1e-6:
+                        current_val = 1.0
+                    elif curr_norm < sqrt8:
                         current_val = 1 - curr_norm / sqrt8
-                        decision_status = "SOLVED"
-                    elif curr_norm <= 6:
-                        current_val = (sqrt8 - curr_norm) / (6 - sqrt8)
-                        decision_status = "PARTIAL"
                     else:
                         current_val = -1
-                        decision_status = "SEARCHING"
 
                     # --------------------
-                    # Log step metrics
+                    # Log factors and step metrics
                     # --------------------
+                    print(f"    u: {u.tolist()}")
+                    print(f"    v: {v.tolist()}")
+                    print(f"    w: {w.tolist()}")
+
                     global_step += 1
                     log_metrics({
                         "Step/reward": current_val,
@@ -420,6 +421,16 @@ def train():
                     }, step=global_step)
                 
                     # Broadcast to Visualizer
+                    curr_norm = info["residual_norm"]
+                    sqrt8 = 8 ** 0.5
+                    
+                    if curr_norm < 1e-6:
+                        decision_status = "SOLVED"
+                    elif curr_norm < sqrt8:
+                        decision_status = "PROGRESS"
+                    else:
+                        decision_status = "SEARCHING"
+
                     viz.broadcast({
                         "type": "step",
                         "global_step": global_step,

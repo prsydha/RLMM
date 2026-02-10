@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
 from models.resnet_pv_network import PolicyValueNet
-from mlo.checkpoint import load_checkpoint
+# from mlo.checkpoint import load_checkpoint
 
 # Fix for CuPy/CUDA DLL error on Windows
 import os
@@ -34,17 +34,26 @@ def update_benchmark_with_agent():
         print("No checkpoints found. Run training first.")
         return
 
-    # Find the latest checkpoint
-    checkpoints = [f for f in os.listdir(checkpoint_dir) if f.startswith("model_step_") and f.endswith(".pt")]
-    if not checkpoints:
-        print("No checkpoints found.")
-        return
+    # Try to load latest_model.pth first (Production standard)
+    latest_pth = os.path.join(checkpoint_dir, "latest_model.pth")
+    
+    if os.path.exists(latest_pth):
+        ckpt_path = latest_pth
+        print(f"Loading checkpoint: {ckpt_path}")
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
+        step = checkpoint.get("global_step", 0)
+    else:
+        # Fallback to step-based naming
+        checkpoints = [f for f in os.listdir(checkpoint_dir) if f.startswith("model_step_") and f.endswith(".pt")]
+        if not checkpoints:
+            print("No checkpoints found.")
+            return
 
-    latest = max(checkpoints, key=lambda x: int(x.split("_")[-1].split(".")[0]))
-    ckpt_path = os.path.join(checkpoint_dir, latest)
-    step = int(latest.split("_")[-1].split(".")[0])
-
-    print(f"Loading checkpoint: {ckpt_path} at step {step}")
+        latest = max(checkpoints, key=lambda x: int(x.split("_")[-1].split(".")[0]))
+        ckpt_path = os.path.join(checkpoint_dir, latest)
+        step = int(latest.split("_")[-1].split(".")[0])
+        print(f"Loading checkpoint: {ckpt_path} at step {step}")
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
 
     # Initialize env, model, agent
     config = {
@@ -59,7 +68,15 @@ def update_benchmark_with_agent():
     )
 
     model = PolicyValueNet().to(config["device"])
-    load_checkpoint(model, ckpt_path)
+    
+    # Load state dict robustly
+    if isinstance(checkpoint, dict) and "model_state" in checkpoint:
+        model.load_state_dict(checkpoint["model_state"])
+    elif isinstance(checkpoint, dict):
+        model.load_state_dict(checkpoint)  # Direct state dict
+    else:
+        print("⚠️ Checkpoint format unknown!")
+        model.load_state_dict(checkpoint) # Try anyway
 
     agent = MCTSAgent(
         model=model,
@@ -74,7 +91,12 @@ def update_benchmark_with_agent():
     actions = []
 
     while not done:
-        u, v, w = agent.search(obs)
+        # Get the action tuple from MCTS
+        action_tuple = agent.search(obs)
+        
+        # Parse the 12-tuple into u, v, w vectors (length 4 each for 2x2)
+        u, v, w = agent._parse_action(action_tuple)
+        
         action = {
             'u': u,
             'v': v,
@@ -82,7 +104,14 @@ def update_benchmark_with_agent():
         }
         actions.append(action)
 
+        print(f"  Step {len(actions):02d}: Action Parsed")
+        print(f"    u: {u.tolist()}")
+        print(f"    v: {v.tolist()}")
+        print(f"    w: {w.tolist()}")
+
         obs, reward, terminated, truncated, info = env.step(action)
+        print(f"    Result -> Norm: {info['residual_norm']:.4f}, Valid: {info['action_valid']}")
+        
         done = terminated or truncated
 
     # Get the algorithm description

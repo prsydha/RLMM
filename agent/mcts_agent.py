@@ -194,8 +194,10 @@ class MCTSAgent:
                 
                 # 4. Reconstruct next state
                 next_flat_residual = next_residual.flatten()
-                next_step = step + (1 / project_config.MAX_STEPS)  # Normalized step increment
-                next_rank = rank + (1 / project_config.MAX_STEPS)  # Normalized rank increment
+                # Use environment's max_rank for consistent normalization
+                max_steps = self.env.max_rank if hasattr(self.env, 'max_rank') else project_config.MAX_STEPS
+                next_step = step + (1 / max_steps)  # Normalized step increment
+                next_rank = rank + (1 / max_steps)  # Normalized rank increment
                 next_norm = np.linalg.norm(next_residual) / 10.0
                 
                 next_state = np.concatenate([
