@@ -19,6 +19,7 @@ def init_logger(config, offline=False):
         mode = "offline" if offline else "online"
         init_kwargs = {
             "project": "alpha_tensor_rl",
+            "entity": "prsydha",
             "name": config.get("run_name"),
             "config": config,
             "mode": mode,
