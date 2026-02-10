@@ -46,8 +46,8 @@ class MCTSAgent:
             return default_action
         
         # Add Dirichlet noise to root for exploration during training
-        # if add_noise and root.children:
-        #     self._add_dirichlet_noise(root)
+        if add_noise and root.children:
+            self._add_dirichlet_noise(root)
 
         # 2. simulation loop
         for sim_idx in range(self.n_simulations):

@@ -22,7 +22,7 @@ MCTS_SIMS = 350             # Slightly more simulations for better search
 
 # --- MCTS Settings ---
 CPUCT = 2.0                 # Higher exploration constant
-DIRICHLET_ALPHA = 0.6       # More uniform noise (encourages trying new actions)
+DIRICHLET_ALPHA = 0.8       # More uniform noise (encourages trying new actions)
 DIRICHLET_EPSILON = 0.5     # 50% noise, 50% policy - high exploration
 
 

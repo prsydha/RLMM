@@ -7,6 +7,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from collections import deque
 import subprocess
+import wandb
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -244,6 +245,9 @@ def train():
     init_logger(config)
 
     global_step = 0
+    epoch_step = 0
+    eval_step = 0
+    episode_step = 0
     
     # Start Visualizer Server
     viz = VisualizerServer()
@@ -352,13 +356,14 @@ def train():
                     # Log step metrics
                     # --------------------
                     log_metrics({
-                    "episode_reward": final_value,
-                    "residual_norm": info["residual_norm"],
-                    "rank_used": info["rank_used"],
-                    "action_valid": int(info["action_valid"]),
-                    "action_sparsity": action_sparsity,
-                    "action": action
-                    }, step=global_step)
+                    "global_step": global_step,
+                    "step/reward": reward,
+                    "step/residual_norm": info["residual_norm"],
+                    "step/rank_used": info["rank_used"],
+                    "step/action_valid": int(info["action_valid"]),
+                    "step/action_sparsity": action_sparsity,
+                    "step/action": action
+                    })
                 
                     # Calculate live reward/status for visualization
                     curr_norm = info["residual_norm"]
@@ -405,15 +410,16 @@ def train():
                 # --------------------
                 # Episode summary table
                 # --------------------
-                import wandb
-                table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank"])
-                table.add_data(
-                    episode,
-                    reward,
-                    info["residual_norm"],
-                    info["rank_used"]
-                )
-                wandb.log({"episode_summary": table})
+                # import wandb
+                # table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank"])
+                # table.add_data(
+                #     episode,
+                #     reward,
+                #     info["residual_norm"],
+                #     info["rank_used"]
+                # )
+                # episode_step += 1
+                # log_metrics({"episode_summary": table}, step=episode_step)
 
                 # assign value (winner) to all steps in this episode
                 # if solved, value =1 else -1
@@ -437,16 +443,18 @@ def train():
                 # --------------------
                 # Episode summary table
                 # --------------------
-                import wandb
-                table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank", "Solved"])
+                episode_step += 1
+                table = wandb.Table(columns=["Epoch", "Episode", "Reward", "Residual", "Rank", "Solved"])
                 table.add_data(
+                    epoch,
                     episode,
                     final_value,
                     info["residual_norm"],
                     info["rank_used"],
                     episode_solved
                 )
-                wandb.log({"episode_summary": table})
+
+                log_metrics({"episode/summary": table,"episode/final_value":final_value, "episode_step" : episode_step})
 
                 # Store episode data with success flag for prioritized replay
                 for data in episode_data:
@@ -532,6 +540,7 @@ def train():
                 total_policy_loss += policy_loss.item()
 
             avg_loss = total_loss / n_train_steps
+
             avg_value_loss = total_value_loss / n_train_steps
             avg_policy_loss = total_policy_loss / n_train_steps
 
@@ -578,21 +587,23 @@ def train():
                 # "temperature": temperature,
                 # "epsilon": eps_greedy
             })
-        
+
+            epoch_step += 1
             # Log epoch metrics
             log_metrics({
-                "epoch_loss": avg_loss,
-                "epoch_value_loss": avg_value_loss,
-                "epoch_policy_loss": avg_policy_loss,
-                "learning_rate": current_lr,
-                "replay_buffer_size": len(replay_buffer),
-                "best_rank_found": best_rank_found,
-                # "temperature": temperature,
-                # "epsilon": eps_greedy,
-                "epoch_successes": epoch_successes,
-                "total_successes": total_successes,
-                "success_rate": recent_success_rate
-            }, step=epoch)
+                "epoch_step" : epoch_step,
+                "epoch/avg_loss": avg_loss,
+                "epoch/value_loss": avg_value_loss,
+                "epoch/policy_loss": avg_policy_loss,
+                "epoch/learning_rate": current_lr,
+                # "epoch/replay_buffer_size": len(replay_buffer),
+                "epoch/best_rank_found": best_rank_found,
+                # # "temperature": temperature,
+                # # "epsilon": eps_greedy,
+                # "epoch/epoch_successes": epoch_successes,
+                # "epoch/total_successes": total_successes,
+                "epoch/success_rate": recent_success_rate,
+            })
         
             # Step learning rate scheduler
             scheduler.step()
@@ -625,12 +636,14 @@ def train():
                 else:
                     epochs_without_improvement += 1
                 
+                eval_step += 1
                 log_metrics({
-                    "eval_steps": eval_steps,
-                    "eval_rank": eval_info['rank_used'],
-                    "eval_residual": eval_info['residual_norm'],
-                    "eval_success": int(eval_terminated)
-                }, step=epoch)
+                    "eval_step":eval_step,
+                    "eval/steps": eval_steps,
+                    "eval/rank": eval_info['rank_used'],
+                    "eval/residual": eval_info['residual_norm'],
+                    "eval/success": int(eval_terminated)
+                })
         
             # Save Checkpoint
             if (epoch+1) % 10 == 0:
