@@ -249,12 +249,12 @@ def train():
     eval_step = 0
     episode_step = 0
     
-    # Start Visualizer Server
-    viz = VisualizerServer(port=8766)
-    try:
-        viz.start()
-    except Exception as e:
-        print(f"Failed to start Visualizer Server: {e}")
+    # # Start Visualizer Server
+    # viz = VisualizerServer(port=8766)
+    # try:
+    #     viz.start()
+    # except Exception as e:
+    #     print(f"Failed to start Visualizer Server: {e}")
 
     try:
         for epoch in range(EPOCHS):
@@ -379,21 +379,21 @@ def train():
                         current_val = -1
                         decision_status = "SEARCHING"
 
-                    # Broadcast to Visualizer
-                    viz.broadcast({
-                        "type": "step",
-                        "global_step": global_step,
-                        "episode": episode,
-                        "reward": current_val,
-                        "residual": curr_norm,
-                        "rank": info["rank_used"],
-                        "step_count": steps,
-                        "elapsed": 0,
-                        "sparsity": action_sparsity,
-                        "action_valid": int(info["action_valid"]),
-                        "action": action,
-                        "status": decision_status
-                    })
+                    # # Broadcast to Visualizer
+                    # viz.broadcast({
+                    #     "type": "step",
+                    #     "global_step": global_step,
+                    #     "episode": episode,
+                    #     "reward": current_val,
+                    #     "residual": curr_norm,
+                    #     "rank": info["rank_used"],
+                    #     "step_count": steps,
+                    #     "elapsed": 0,
+                    #     "sparsity": action_sparsity,
+                    #     "action_valid": int(info["action_valid"]),
+                    #     "action": action,
+                    #     "status": decision_status
+                    # })
 
                     print(
                     f"Episode {episode:03d} | "
@@ -445,6 +445,7 @@ def train():
                 episode_step += 1
                 table = wandb.Table(columns=["Epoch","Episode", "Reward", "Residual", "Rank", "Solved"])
                 table.add_data(
+                    epoch,
                     episode,
                     final_value,
                     info["residual_norm"],
@@ -546,18 +547,18 @@ def train():
             print(f"  Learning Rate: {current_lr:.6f}")
             print(f"  Gradient Norm: {total_grad_norm:.4f}")
         
-            # Broadcast training metrics to visualizer
-            viz.broadcast({
-                "type": "training",
-                "epoch": epoch,
-                "loss": avg_loss,
-                "policy_loss": avg_policy_loss,
-                "value_loss": avg_value_loss,
-                "learning_rate": current_lr,
-                "gradient_norm": total_grad_norm,
-                "replay_buffer_size": len(replay_buffer),
-                "success_rate": recent_success_rate
-            })
+            # # Broadcast training metrics to visualizer
+            # viz.broadcast({
+            #     "type": "training",
+            #     "epoch": epoch,
+            #     "loss": avg_loss,
+            #     "policy_loss": avg_policy_loss,
+            #     "value_loss": avg_value_loss,
+            #     "learning_rate": current_lr,
+            #     "gradient_norm": total_grad_norm,
+            #     "replay_buffer_size": len(replay_buffer),
+            #     "success_rate": recent_success_rate
+            # })
         
             # GPU memory usage
             if torch.cuda.is_available():
@@ -572,17 +573,17 @@ def train():
             else:
                 print(f"  ⏳ No successes yet. Keep training...")
         
-            # Broadcast epoch summary
-            viz.broadcast({
-                "type": "epoch_summary",
-                "epoch": epoch,
-                "epoch_successes": epoch_successes,
-                "total_successes": total_successes,
-                "success_rate": recent_success_rate,
-                "best_rank": best_rank_found,
-                # "temperature": temperature,
-                # "epsilon": eps_greedy
-            })
+            # # Broadcast epoch summary
+            # viz.broadcast({
+            #     "type": "epoch_summary",
+            #     "epoch": epoch,
+            #     "epoch_successes": epoch_successes,
+            #     "total_successes": total_successes,
+            #     "success_rate": recent_success_rate,
+            #     "best_rank": best_rank_found,
+            #     # "temperature": temperature,
+            #     # "epsilon": eps_greedy
+            # })
         
             epoch_step += 1
             # Log epoch metrics
@@ -647,8 +648,10 @@ def train():
                     os.makedirs("checkpoints")
                 torch.save(net.state_dict(), f"checkpoints/latest_model_res.pth")
     finally:
-        print("Stopping Visualizer Server...")
-        viz.stop()
+    #     print("Stopping Visualizer Server...")
+    #     viz.stop()
+        print("training loop ending.")
+
     
     # Run benchmark visualization after training
     try:
