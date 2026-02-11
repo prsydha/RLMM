@@ -69,11 +69,17 @@ export default function TrainingMonitor({
                   totalOps: data.rank,
                   elapsed: data.elapsed,
                   sparsity: data.sparsity,
-                  action: data.action
+                  valid: data.action_valid,
+                  status: data.status,
+                  action: data.action,
+                  learning_rate: data.learning_rate,
+                  loss: data.loss,
+                  policy_loss: data.policy_loss,
+                  value_loss: data.value_loss
                 })
               }
               if (onLog) {
-                onLog(`Ep ${data.episode} Step ${data.step_count}: R=${data.reward.toFixed(4)} Rank=${data.rank} Res=${data.residual.toExponential(2)}`, 'info')
+                onLog(`Ep ${data.episode} Step ${data.step_count}: R=${data.reward.toFixed(4)} Rank=${data.rank} Res=${data.residual.toFixed(2)}`, 'info')
               }
             }
           } catch (e) {
@@ -153,7 +159,7 @@ export default function TrainingMonitor({
 
           <MetricCard
             label="RESIDUAL"
-            value={currentMetrics.residual.toExponential(4)}
+            value={currentMetrics.residual.toFixed(2)}
             color="#f0932b"
           />
 
@@ -161,7 +167,12 @@ export default function TrainingMonitor({
             label="RANK USED"
             value={currentMetrics.rank}
             color="#00f2fe"
-            fullWidth
+          />
+
+          <MetricCard
+            label="STATUS"
+            value={currentMetrics.status || 'SEARCHING'}
+            color={currentMetrics.status === 'SOLVED' ? '#43e97b' : currentMetrics.status === 'PARTIAL' ? '#f0932b' : '#666'}
           />
         </div>
       ) : (

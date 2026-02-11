@@ -1,55 +1,93 @@
 import torch
 import numpy as np
 import math
+import random
 from utils.tree_node import TreeNode
+import config as project_config
+
+VIRTUAL_LOSS = 1.0
 
 class MCTSAgent:
-    def __init__(self, model, env, n_simulations=100, cpuct=1.0, device='cpu'):
-        self.model = model # neural net with policy and value head
+    def __init__(self, model, env, n_simulations=100, cpuct=None, device='cpu', temperature=1.0, epsilon_greedy=None):
+        self.model = model
         self.env = env # copy of the environment for simulations
         self.n_simulations = n_simulations
-        self.cpuct = cpuct # exploration/exploitation constant
+        self.cpuct = cpuct if cpuct is not None else project_config.CPUCT  # exploration constant
         self.device = device
+        self.temperature = temperature
         self.action_map = [-1, 0, 1]
+        
+        # Dirichlet noise parameters for exploration
+        self.dirichlet_alpha = project_config.DIRICHLET_ALPHA
+        self.dirichlet_epsilon = project_config.DIRICHLET_EPSILON
+        
+        # Epsilon-greedy exploration
+        self.epsilon_greedy = epsilon_greedy if epsilon_greedy is not None else project_config.EPSILON_GREEDY
 
-    def search(self, root_state, return_probs=False):
+    def search(self, root_state, return_probs=False, add_noise=True):
         """
         runs MCTS simulations starting from the current state.
         If return_probs is True, returns (best_action, visit_distribution_map).
         """
-        root = TreeNode(root_state, prior=1.0)
-
+        import sys
+        
         # 1. expansion of root node (initialize root)
+        root = TreeNode(root_state, prior=1.0)
+        
+        # Expand root first
         self._evaluate_and_expand(root)
+        
+        if not root.children:
+            print("WARNING: No children after root expansion!", file=sys.stderr)
+            # Return a default action
+            default_action = tuple([0]*4 + [1]*4 + [0]*4)  # u=[0,0,0,0], v=[1,1,1,1], w=[0,0,0,0]
+            if return_probs:
+                return default_action, {default_action: 1}
+            return default_action
+        
+        # Add Dirichlet noise to root for exploration during training
+        # if add_noise and root.children:
+        #     self._add_dirichlet_noise(root)
 
         # 2. simulation loop
-        for _ in range(self.n_simulations):
+        for sim_idx in range(self.n_simulations):
             node = root
-            search_path = [node] # track root -> leaf path, initially just holds the root node.
+            search_path = [node]
 
-            # A. Selection
+            # A. Selection - traverse down tree
+            depth = 0
             while not node.is_leaf():
                 action, node = self._select_child(node)
+                if node is None:
+                    break
                 search_path.append(node)
+                depth += 1
+                if depth > 50:  # Safety limit
+                    break
+            
+            if node is None:
+                continue
 
             # B. Expansion and Evaluation
-            # if the node represents a terminal state(solved), value is high
-            # otherwise, use the neural network to evaluate
             value = self._evaluate_and_expand(node)
 
             # C. Backpropagation
             self._backpropagate(search_path, value)
         
         # 3. select best move (greedy with respect to visit count)
-        # return the action with the most visits
-        best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
+        # Epsilon-greedy: occasionally pick a random action to encourage exploration
+        # if add_noise and random.random() < self.epsilon_greedy:
+        #     # Random action from children
+        #     best_action = random.choice(list(root.children.keys()))
+        # else:
+            # Greedy: pick action with most visits
+            best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
 
         if return_probs:
             # return a dictionary: {action_tuple: visit_count}
             # this represnts the full "posterior" distribution found by MCTS
             visit_counts = {action: child.visit_count for action, child in root.children.items()}
             return best_action, visit_counts
-        # returns the best action for the current root_state, and NOT the complete set of actions.
         return best_action
     
     def _select_child(self, node):
@@ -107,25 +145,35 @@ class MCTSAgent:
             return node.value_sum / max(1, node.visit_count) # return stored value
         
         # check if this state solves the environment
-        # in a real run, we might simulate 1 step of environment here
-        norm = np.linalg.norm(node.state)
+        # Check norm of just the residual part (first 64 elements)
+        tensor_dim = project_config.TENSOR_DIM  # 64 for 2x2
+        residual_flat = node.state[:tensor_dim]
+        norm = np.linalg.norm(residual_flat)
+        
         if norm < 1e-5:
             node.is_terminal = True # mark as terminal to avoid re-evaluation
             return 1.0 # solved!
         
-         # prepare state for network
-         # standard "Dense" (linear) layers in neural networks expect a flat vector as input
-        state_tensor = torch.FloatTensor(node.state.flatten()).unsqueeze(0).to(self.device) # flatten the multidim array, convert to a PyTorch tensor with high-precision decimals to calculate gradients, add fake batch dimension, move to device( gpu or cpu)
+        # prepare state for network
+        # standard "Dense" (linear) layers in neural networks expect a flat vector as input
+        state_tensor = torch.FloatTensor(node.state.flatten()).unsqueeze(0).to(self.device)
 
-        # why rollouts not used? action space enormous, impossible to randomly reach to terminal, thats why.
         with torch.no_grad(): # disable gradient calculation for inference
             policy_logits, value = self.model(state_tensor)
 
         value = value.item() # get scalar value from tensor
         
-        # expansion: we cannot add all possible actions due to combinatorial explosion
-        # so we sample the K most probable actions from the policy head
-        top_k_actions = self._sample_actions(policy_logits, k=10)
+        # Boost value based on proximity to solution
+        # sqrt(8) ≈ 2.83 is the initial norm, closer to 0 is better
+        sqrt8 = 8 ** 0.5
+        if norm < sqrt8:
+            # Already making progress beyond one step - boost the value signal
+            progress_bonus = (sqrt8 - norm) / sqrt8 * 0.5
+            value = min(1.0, value + progress_bonus)
+        
+        # expansion: sample K actions from the policy head
+        # k=25 for full exploration mode (more diverse actions to try)
+        top_k_actions = self._sample_actions(policy_logits, k=25)
 
         # instantiate child nodes for each action
         for action, action_prob in top_k_actions:
@@ -133,14 +181,32 @@ class MCTSAgent:
                 # calculate the next state (residual)
                 u, v, w = self._parse_action(action)
 
-                # we need a temporary copy of the environment to simulate the step
-                # for simplicity, we can implement the tensor update math directly:
+                # 1. Extract residual tensor from flattened state
+                residual = node.state[:tensor_dim].reshape(4, 4, 4)
+                
+                # 2. Extract and update metadata
+                step = node.state[tensor_dim]
+                rank = node.state[tensor_dim + 1]
+                
+                # 3. Apply update
                 update = np.einsum('i, j, k -> ijk', u, v, w)
-                next_state = node.state - update
+                next_residual = residual - update
+                
+                # 4. Reconstruct next state
+                next_flat_residual = next_residual.flatten()
+                # Use environment's max_rank for consistent normalization
+                max_steps = self.env.max_rank if hasattr(self.env, 'max_rank') else project_config.MAX_STEPS
+                next_step = step + (1 / max_steps)  # Normalized step increment
+                next_rank = rank + (1 / max_steps)  # Normalized rank increment
+                next_norm = np.linalg.norm(next_residual) / 10.0
+                
+                next_state = np.concatenate([
+                    next_flat_residual, 
+                    [next_step, next_rank, next_norm]
+                ]).astype(np.float32)
 
                 # create child node with prior probability from policy head
-                # Prior is product of probabilities from the 12 heads (joint distribution)
-                child = TreeNode(next_state, parent=node, prior=action_prob)  # refined
+                child = TreeNode(next_state, parent=node, prior=action_prob)
                 node.children[action] = child
                 
         return value
@@ -156,21 +222,41 @@ class MCTSAgent:
             # value = -value
             # for single-player optimization, value stays positive
     
+    def _add_dirichlet_noise(self, node):
+        """
+        Add Dirichlet noise to root node priors for exploration.
+        This is a key technique from AlphaZero.
+        """
+        actions = list(node.children.keys())
+        n = len(actions)
+        if n == 0:
+            return
+        
+        # Generate Dirichlet noise
+        noise = np.random.dirichlet([self.dirichlet_alpha] * n)
+        
+        # Mix original prior with noise
+        for i, action in enumerate(actions):
+            child = node.children[action]
+            child.prior = (1 - self.dirichlet_epsilon) * child.prior + self.dirichlet_epsilon * noise[i]
 
     def _sample_actions(self, logits, k=15):
         """
         Samples k actions and calculates their joint probabilities.
+        Uses temperature-based sampling for better exploration.
         Returns: List of tuples: [(action_tuple, joint_probability), ...]
         """
         sampled_results = []
-        # convert logits to probabilities using softmax (shape: [batch=1, num_actions])
-        probs = [torch.softmax(l, dim = -1) for l in logits]
+        
+        # Apply temperature to logits before softmax for exploration control
+        temp = 1 #max(0.1, self.temperature)
+        probs = [torch.softmax(l / temp, dim=1) for l in logits]
 
         # Determine vector length (4 for 2x2, 9 for 3x3)
         L = len(logits) // 3
 
         attempts = 0
-        max_attempts = k * 10 # Safety break to prevent infinite loops
+        max_attempts = k * 20  # Increased attempts
 
         while len(sampled_results) < k and attempts < max_attempts:
             attempts += 1
@@ -214,8 +300,98 @@ class MCTSAgent:
         
     def _parse_action(self, action_tuple):
         # Convert tuple of 12 ints to u, v, w arrays
+        # For 2x2, each vector is len 4
         u = np.array(action_tuple[0:4])
         v = np.array(action_tuple[4:8])
         w = np.array(action_tuple[8:12])
         return u, v, w
+    
+    def batch_search(self, root_state, simulations=100, batch_size=8):
+        root = TreeNode(root_state, prior=1.0)
+        
+        # Expand root first to populate children
+        self._evaluate_and_expand(root) 
+        
+        # Add Dirichlet noise to root (optional, good for training)
+        self._add_dirichlet_noise(root)
+
+        num_batches = simulations // batch_size
+        
+        for _ in range(num_batches):
+            leaves = []
+            search_paths = []
+            
+            # --- PHASE 1: SELECTION (Parallel Descent) ---
+            for _ in range(batch_size):
+                node = root
+                path = [node]
+                
+                # Traverse until we hit a leaf (unexpanded node) or terminal state
+                while node.is_expanded():
+                    # Pick best child using UCB
+                    # IMPORTANT: UCB calculation must see the temporary Virtual Loss!
+                    action, node = self._select_child(node)
+                    path.append(node)
+                    
+                    # APPLY VIRTUAL LOSS IMMEDIATELY
+                    # We pretend we visited this node and it was a "loss"
+                    node.visit_count += 1
+                    node.value_sum -= VIRTUAL_LOSS 
+                
+                search_paths.append(path)
+                leaves.append(node)
+                
+            # --- PHASE 2: BATCH EVALUATION ---
+            # Collect states from all leaves that need expansion
+            # (Some leaves might be terminal, so we filter)
+            expandable_leaves = [(i, node) for i, node in enumerate(leaves) 
+                                 if not node.is_expanded() and not self._is_terminal(node)]
+            
+            if expandable_leaves:
+                indices, nodes = zip(*expandable_leaves)
+                
+                # Prepare batch for GPU
+                states = [torch.FloatTensor(n.state) for n in nodes]
+                state_batch = torch.stack(states).to(self.device)
+                
+                # ONE big forward pass instead of 8 small ones
+                with torch.no_grad():
+                    policy_logits, values = self.model(state_batch)
+                
+                # Expand all nodes
+                for i, idx in enumerate(indices):
+                    node = leaves[idx]
+                    probs = torch.softmax(policy_logits[i], dim=0)
+                    est_value = values[i].item()
+                    
+                    # Create children
+                    self._expand_node_from_probs(node, probs)
+                    
+                    # Store the REAL value to backpropagate
+                    # We store it in the path list or a temporary variable
+                    search_paths[idx][-1].temp_value = est_value
+
+            # --- PHASE 3: BACKPROPAGATION & CORRECTION ---
+            for i, path in enumerate(search_paths):
+                leaf = path[-1]
+                
+                # Determine the value to propagate
+                # If it was terminal, calculate reward. If expanded, use NN value.
+                if hasattr(leaf, 'temp_value'):
+                    value = leaf.temp_value
+                    del leaf.temp_value # Clean up
+                else:
+                    # It was terminal or we couldn't evaluate
+                    value = self._get_terminal_value(leaf)
+
+                for node in reversed(path):
+                    # 1. REMOVE VIRTUAL LOSS (Undo the "lie")
+                    node.visit_count -= 1
+                    node.value_sum += VIRTUAL_LOSS
+                    
+                    # 2. ADD REAL UPDATE
+                    node.visit_count += 1
+                    node.value_sum += value
+                    
+        return self._select_best_action(root)
 

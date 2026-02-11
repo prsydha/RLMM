@@ -62,18 +62,34 @@ class VisualizerServer:
             if isinstance(o, np.ndarray): return o.tolist()
             return str(o)
             
-        message = json.dumps(data, default=convert)
-        
+        try:
+            message = json.dumps(data, default=convert, allow_nan=False)
+        except ValueError:
+            # Handle NaN/Infinity by replacing with null or 0
+            # simplejson can do ignore_nan, but standard json raises ValueError if allow_nan=False
+            # Let's do a manual cleanup if needed, or just allow_nan=True (default) but JS hates it.
+            # Safe strategy: allow_nan=True creates invalid JSON for JS. 
+            # We must clean it. 
+            # For now, let's just log error and return
+            print("Visualizer Broadcast Error: Data contains NaN or Infinity")
+            return
+
         # Schedule the send in the event loop
         if self.loop and self.loop.is_running():
+            print(f"Visualizer: Broadcasting to {len(self.clients)} clients") 
             asyncio.run_coroutine_threadsafe(self._broadcast_message(message), self.loop)
+        else:
+            print("Visualizer Error: Loop is not running")
 
     async def _broadcast_message(self, message):
         if self.clients:
-            await asyncio.gather(
+            results = await asyncio.gather(
                 *[client.send(message) for client in self.clients],
                 return_exceptions=True
             )
+            for res in results:
+                if isinstance(res, Exception):
+                    print(f"Visualizer Send Error: {res}")
 
     def stop(self):
         self.running = False

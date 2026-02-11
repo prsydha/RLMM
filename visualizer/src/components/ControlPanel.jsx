@@ -9,7 +9,7 @@ export default function ControlPanel({
   lastSuccess,
   rewardHistory,
   residualHistory
-  
+
 }) {
   return (
     <div className="control-panel">
@@ -31,10 +31,10 @@ export default function ControlPanel({
       <div className="control-section">
         <h3>Residual Norm</h3>
         <div style={{ marginBottom: '10px' }}>
-          <Sparkline 
-            data={residualHistory || []} 
-            color={stats.residual < 1 ? '#43e97b' : '#ff6b6b'} 
-            height={80} 
+          <Sparkline
+            data={residualHistory || []}
+            color={stats.residual < 1 ? '#43e97b' : '#ff6b6b'}
+            height={80}
           />
         </div>
 
@@ -57,6 +57,27 @@ export default function ControlPanel({
                   }} />
                 </div>
                 <span className="stat-value">{(stats.sparsity * 100).toFixed(1)}%</span>
+              </div>
+            </div>
+          )}
+
+          <div className="stat-item">
+            <span className="stat-label">Last Action</span>
+            <span className="stat-value" style={{
+              color: stats.valid ? '#43e97b' : '#ff6b6b',
+              fontWeight: 'bold'
+            }}>
+              {stats.valid ? 'VALID' : 'INVALID'}
+            </span>
+          </div>
+
+          {stats.action && (
+            <div className="stat-item" style={{ gridColumn: 'span 2' }}>
+              <span className="stat-label">Action Vectors</span>
+              <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#aaa', marginTop: '5px' }}>
+                <div>u: [{Array.isArray(stats.action.u) ? stats.action.u.join(', ') : 'N/A'}]</div>
+                <div>v: [{Array.isArray(stats.action.v) ? stats.action.v.join(', ') : 'N/A'}]</div>
+                <div>w: [{Array.isArray(stats.action.w) ? stats.action.w.join(', ') : 'N/A'}]</div>
               </div>
             </div>
           )}
@@ -107,12 +128,52 @@ export default function ControlPanel({
         </div>
       </div>
 
+      {/* Training Metrics */}
+      {(stats.loss !== undefined || stats.learning_rate !== undefined) && (
+        <div className="control-section">
+          <h3>Training Progress</h3>
+          <div className="stats-panel">
+            {stats.loss !== undefined && (
+              <div className="stat-item">
+                <span className="stat-label">Total Loss</span>
+                <span className="stat-value">{stats.loss.toFixed(4)}</span>
+              </div>
+            )}
+            {stats.policy_loss !== undefined && (
+              <div className="stat-item">
+                <span className="stat-label">Policy Loss</span>
+                <span className="stat-value">{stats.policy_loss.toFixed(4)}</span>
+              </div>
+            )}
+            {stats.value_loss !== undefined && (
+              <div className="stat-item">
+                <span className="stat-label">Value Loss</span>
+                <span className="stat-value">{stats.value_loss.toFixed(4)}</span>
+              </div>
+            )}
+            {stats.learning_rate !== undefined && (
+              <div className="stat-item">
+                <span className="stat-label">Learning Rate</span>
+                <span className="stat-value">{stats.learning_rate.toExponential(2)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Live Stats */}
       <div className="control-section">
         <h3>Live Stats</h3>
         <div className="stats-panel">
           {/* Combined compact stats */}
           <div className="stat-grid">
+            <div className="stat-box" style={{ gridColumn: 'span 3', background: stats.status === 'SOLVED' ? 'rgba(67, 233, 123, 0.2)' : 'rgba(255,255,255,0.03)' }}>
+              <div className="label">Decision</div>
+              <div className="value" style={{ color: stats.status === 'SOLVED' ? '#43e97b' : '#fff' }}>
+                {stats.status}
+              </div>
+            </div>
+
             <div className="stat-box">
               <div className="label">Step</div>
               <div className="value">{stats.step}</div>
@@ -122,9 +183,11 @@ export default function ControlPanel({
               <div className="value">{stats.episode || 0}</div>
             </div>
             <div className="stat-box">
-              <div className="label">Resid.</div>
-              <div className="value tiny">
-                {typeof stats.residual === 'number' ? stats.residual.toExponential(1) : '0'}
+              <div className="label">Residual</div>
+              <div className="value tiny" style={{
+                color: stats.residual < 1 ? '#43e97b' : stats.residual < 3 ? '#f0932b' : '#ff6b6b'
+              }}>
+                {typeof stats.residual === 'number' ? stats.residual.toFixed(2) : '0.00'}
               </div>
             </div>
           </div>

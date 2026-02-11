@@ -20,6 +20,8 @@ export default function App() {
     residual: 0,
     reward: 0,
     sparsity: 0,
+    valid: true,
+    status: 'SEARCHING',
     action: null
   })
 

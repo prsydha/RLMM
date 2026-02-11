@@ -1,5 +1,6 @@
 torch
 numpy
-gym
+gymnasium
 wandb
 cupy-cuda12x
+websockets
