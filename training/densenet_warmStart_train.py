@@ -37,8 +37,8 @@ EPISODES_PER_EPOCH = project_config.EPISODES_PER_EPOCH
 MCTS_SIMS = project_config.MCTS_SIMS
 
 config = {
-    "run_name": "RLMM_denseNnet_and_warmStart",
-    "matrix_size": (2, 2, 2),
+    "run_name": "RLMM_denseNet_and_warmStart_3x3",
+    "matrix_size": (3, 3, 3),  # Changed from (2, 2, 2) to (3, 3, 3)
     "max_rank": project_config.MAX_STEPS,  # Use config value (20 for full exploration)
     "learning rate": LEARNING_RATE,
     "batch_size": BATCH_SIZE,
@@ -51,7 +51,7 @@ config = {
 }
 
 
-def compute_marginal_targets(visit_counts, n_heads=12, action_map=[-1, 0, 1]):
+def compute_marginal_targets(visit_counts, n_heads=27, action_map=[-1, 0, 1]):  # Changed n_heads from 12 to 27
     """
     Converts MCTS tuple visits into marginal probability targets for each head.
 
@@ -95,7 +95,7 @@ def train():
     env = TensorDecompositionEnv(matrix_size=config["matrix_size"], max_rank=config["max_rank"])
 
     net = PolicyValueNet().to(device)
-    checkpoint_path = "checkpoints/dense_warm/latest_model.pth"
+    checkpoint_path = "checkpoints/dense_warm_3x3/latest_model.pth"  # Updated checkpoint path
 
     # Check if a saved model already exists
     if os.path.exists(checkpoint_path):
@@ -238,13 +238,14 @@ def train():
                 # Log step metrics
                 # --------------------
                 log_metrics({
-                    "step_reward": reward,
-                    "residual_norm": info["residual_norm"],
-                    "rank_used": info["rank_used"],
-                    "action_valid": int(info["action_valid"]),
-                    "action_sparsity": action_sparsity,
-                    "action": action
-                }, step=global_step)
+                    "global_step": global_step,
+                    "step/reward": reward,
+                    "step/residual_norm": info["residual_norm"],
+                    "step/rank_used": info["rank_used"],
+                    "step/action_valid": int(info["action_valid"]),
+                    "step/action_sparsity": action_sparsity,
+                    "step/action": action
+                    })
 
                 print(
                     f"Episode {episode:03d} | "
@@ -324,15 +325,22 @@ def train():
                 # KLDivLoss(input = log_probs, target = probs)
                 # "batchmean" sums over classes and averages over batch
                 policy_loss += F.kl_div(pred_log_probs, target_probs, reduction='batchmean')
+        
+            # combine losses with weighted policy loss (policy is harder)
+            loss = value_loss + 0.5 * policy_loss
 
-            # combine losses
-            loss = value_loss + policy_loss
+            optimizer.zero_grad() # clear previous gradients
+            loss.backward()       # backpropagate to compute gradients
+        
+            # Gradient clipping for stability and track gradient norms
+            grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
+        
+            optimizer.step()      # update weights
 
-            optimizer.zero_grad()  # clear previous gradients becuase by default, PyTorch accumulates gradients
-            loss.backward()  # backpropagate to compute gradients
-            optimizer.step()  # update weights
 
             total_loss += loss.item()  # accumulate loss for logging
+            total_value_loss += value_loss.item()
+            total_policy_loss += policy_loss.item()
 
             # The variable "loss" is not just a number; it is a PyTorch Tensor that sits at the top of a complex computational graph. It carries "history" (the grad_fn) so that PyTorch knows how to backpropagate through it.
 
@@ -341,19 +349,31 @@ def train():
             # It disconnects it from the computational graph.
             # It moves the value from GPU memory back to CPU memory.
 
-        avg_loss = total_loss / 10
-        print(f"  Average Loss: {avg_loss:.4f}")
+        avg_total_loss = total_loss / 10
+        avg_value_loss = total_value_loss / 10
+        avg_policy_loss = total_policy_loss / 10
+        print(f"  Average Loss: {avg_total_loss:.4f}")
 
+        epoch_step += 1
+            # Log epoch metrics
         log_metrics({
-            "epoch_loss": avg_loss
-        }, step=global_step)
+            "epoch_step" : epoch_step,
+            "epoch/avg_loss": avg_total_loss,
+            "epoch/value_loss": avg_value_loss,
+            "epoch/policy_loss": avg_policy_loss,
+            # "epoch/replay_buffer_size": len(replay_buffer),
+            # # "temperature": temperature,
+            # # "epsilon": eps_greedy,
+            # "epoch/epoch_successes": epoch_successes,
+            # "epoch/total_successes": total_successes,
+        })
 
         # Save Checkpoint
         if (epoch + 1) % 10 == 0:
-            if not os.path.exists("checkpoints/dense_warm"):
-                os.makedirs("checkpoints/dense_warm")
-            torch.save(net.state_dict(), f"checkpoints/dense_warm/model_epoch_{epoch + 1}.pth")
-            torch.save(net.state_dict(), f"checkpoints/dense_warm/latest_model.pth")
+            if not os.path.exists("checkpoints/dense_warm_3x3"):  # Updated checkpoint path
+                os.makedirs("checkpoints/dense_warm_3x3")
+            torch.save(net.state_dict(), f"checkpoints/dense_warm_3x3/model_epoch_{epoch + 1}.pth")
+            torch.save(net.state_dict(), f"checkpoints/dense_warm_3x3/latest_model.pth")
             print(f"Checkpoint saved!")
 
 

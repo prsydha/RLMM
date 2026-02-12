@@ -31,9 +31,9 @@ EPISODES_PER_EPOCH = project_config.EPISODES_PER_EPOCH
 MCTS_SIMS = project_config.MCTS_SIMS
 
 config = {
-    "run_name": "RLMM_denseNnet_and_coldStart",
-    "matrix_size": (2, 2, 2),
-    "max_rank": project_config.MAX_STEPS,  # Use config value (20 for full exploration)
+    "run_name": "RLMM_denseNet_and_coldStart_3x3",
+    "matrix_size": (3, 3, 3),  # Changed from (2, 2, 2) to (3, 3, 3)
+    "max_rank": project_config.MAX_STEPS,  # Use config value (30 for full exploration)
     "learning rate": LEARNING_RATE,
     "batch_size": BATCH_SIZE,
     "replay_buffer_size": REPLAY_BUFFER_SIZE,
@@ -86,7 +86,7 @@ class PrioritizedReplayBuffer:
         return len(self.buffer)
 
 
-def compute_marginal_targets(visit_counts, n_heads=12, action_map=[-1, 0, 1]):
+def compute_marginal_targets(visit_counts, n_heads=27, action_map=[-1, 0, 1]):  # Changed from 12 to 27
     """
     Converts MCTS tuple visits into marginal probability targets for each head.
     
@@ -188,7 +188,7 @@ def train():
         hidden_dim=project_config.HIDDEN_DIM, 
         n_heads=project_config.N_HEADS
     ).to(device)
-    checkpoint_path = "checkpoints/latest_model.pth"
+    checkpoint_path = "checkpoints/dense_cold_3x3/latest_model.pth"  # Updated checkpoint path
 
     # Check if a saved model already exists
     # NOTE: With the new architecture, old checkpoints won't be compatible
@@ -261,35 +261,6 @@ def train():
             print(f"\n{'='*60}")
             print(f"--- Epoch {epoch+1}/{EPOCHS} ---")
             print(f"{'='*60}")
-        
-            # Calculate exploration parameters - maintain high exploration longer
-            # For full exploration (up to 20 ranks), we need sustained exploration
-            # progress = epoch / EPOCHS
-            
-            # Temperature: high early (1.5) -> moderate late (0.5)
-            # temperature = max(0.5, 1.5 - progress * 1.0)
-            
-            # Epsilon for random action: stays high longer for more exploration
-            # High early (30%), moderate mid (15%), low late (5%)
-            # if progress < 0.3:
-            #     eps_greedy = 0.30  # First 30% of training: heavy exploration
-            # elif progress < 0.7:
-            #     eps_greedy = 0.20  # Middle 40%: moderate exploration  
-            # else:
-            #     eps_greedy = max(0.05, 0.15 - (progress - 0.7) * 0.33)  # Final 30%: exploitation
-        
-            # # If stuck at 8 steps for many epochs, boost exploration significantly
-            # if best_rank_found >= 8 and epoch > 30:
-            #     eps_greedy = min(0.40, eps_greedy + 0.15)
-            #     temperature = min(2.0, temperature + 0.5)
-            #     print(f"⚠️ Still at {best_rank_found} steps after {epoch} epochs - BOOSTING exploration!")
-            # elif best_rank_found == 7 and epoch > 50:
-            #     # Found Strassen! Now try to find even better (6 step?)
-            #     eps_greedy = min(0.35, eps_greedy + 0.10)
-            #     print(f"✅ Found 7-step! Trying to find 6-step solution...")
-        
-            # print(f"Temperature: {temperature:.3f}, Epsilon-greedy: {eps_greedy:.3f}, Best rank: {best_rank_found}")
-            # print(f"Max allowed steps: {config['max_rank']}")
 
             # --- A. Self-Play Phase (Data Collection) ---
             net.eval() # Set to evaluation mode for inference
@@ -365,21 +336,9 @@ def train():
                     "step/action": action
                     })
                 
-                    # Calculate live reward/status for visualization
+                    # Calculate live reward/status for visualization (updated for 3x3)
                     curr_norm = info["residual_norm"]
-                    sqrt8 = 8 ** 0.5
                     
-                    if curr_norm <= sqrt8:
-                        current_val = 1 - curr_norm / sqrt8
-                        decision_status = "SOLVED"
-                    elif curr_norm <= 6:
-                        current_val = (sqrt8 - curr_norm) / (6 - sqrt8)
-                        decision_status = "PARTIAL"
-                    else:
-                        current_val = -1
-                        decision_status = "SEARCHING"
-
-                    # Broadcast to Visualizer
                     viz.broadcast({
                         "type": "step",
                         "global_step": global_step,
@@ -407,20 +366,6 @@ def train():
                 
                 # end of one episode
 
-                # --------------------
-                # Episode summary table
-                # --------------------
-                # import wandb
-                # table = wandb.Table(columns=["Episode", "Reward", "Residual", "Rank"])
-                # table.add_data(
-                #     episode,
-                #     reward,
-                #     info["residual_norm"],
-                #     info["rank_used"]
-                # )
-                # episode_step += 1
-                # log_metrics({"episode_summary": table}, step=episode_step)
-
                 # assign value (winner) to all steps in this episode
                 # if solved, value =1 else -1
 
@@ -428,8 +373,8 @@ def train():
 
                 final_value = reward_func(terminated)
 
-                # Track episode success
-                episode_solved = (res_norm <= sqrt8)
+                # Track episode success (updated threshold for 3x3)
+                episode_solved = (res_norm < 1e-5)  # Consider solved if residual is effectively zero
                 recent_episodes.append(1 if episode_solved else 0)
                 recent_success_rate = sum(recent_episodes) / len(recent_episodes)
                 
@@ -481,66 +426,45 @@ def train():
 
                 # prepare tensors
                 states_tensor = torch.FloatTensor(np.array(states)).to(device)
-                values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device) # shape (BATCH_SIZE, 1)
+                values_tensor = torch.FloatTensor(np.array(values)).unsqueeze(1).to(device)
 
                 # targets_batch is shape(BATCH_SIZE, n_heads, 3)
                 targets_batch = torch.stack(list(target_dists)).to(device)
 
                 # forward pass
                 policy_logits, value_pred = net(states_tensor)
-
-                # We need to train the network on two losses:
-                # Policy Loss: The network's "intuition" (probabilities) should match the "reality" (MCTS visit counts).
-                # Value Loss: The network's predicted score should match the final result (Solved/Not Solved).
             
-                # 1. Value Loss (MSE) : did we predict the win/loss correctly?
-                value_loss = F.mse_loss(value_pred, values_tensor) # functional mse loss
+                # 1. Value Loss (MSE)
+                value_loss = F.mse_loss(value_pred, values_tensor)
 
-                # 2. Policy Loss (cross-entropy) : did we pick the right integers?
-                # we must split the 'actions' tuple (batch of 12/27 ints) into separate targets for each head
-                # actions is a list of tuples: [(1, 0, -1, ...), (...), ...]
-                # convert to tensor : (batch_size, 12/27)
-                # action_targets = torch.LongTensor(actions).to(device) # LongTensor for integer targets
-                # # map {-1, 0, 1} to {0, 1, 2} for cross-entropy
-                # action_targets = action_targets + 1
-
-                # policy loss with soft targets (KL Divergence)
-                # we treat each head independently
+                # 2. Policy Loss (KL Divergence)
                 policy_loss = 0
 
                 for i in range(len(policy_logits)):
-                    # network output: Logits -> LogSoftmax for KLDiv, shape: (batch_size, 3)
                     pred_log_probs = F.log_softmax(policy_logits[i], dim=1)
-
-                    # target : probability distribution
-                    # shape : (batch_size, 3)
                     target_probs = targets_batch[:, i, :]
-
-                    # KLDivLoss(input = log_probs, target = probs)
-                    # "batchmean" sums over classes and averages over batch
                     policy_loss += F.kl_div(pred_log_probs, target_probs, reduction='batchmean')
             
-                # combine losses with weighted policy loss (policy is harder)
+                # combine losses with weighted policy loss
                 loss = value_loss + 0.5 * policy_loss
 
-                optimizer.zero_grad() # clear previous gradients
-                loss.backward()       # backpropagate to compute gradients
+                optimizer.zero_grad()
+                loss.backward()
             
-                # Gradient clipping for stability and track gradient norms
+                # Gradient clipping for stability
                 grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
             
-                optimizer.step()      # update weights
+                optimizer.step()
             
-                # Track if gradients are vanishing/exploding
-                if train_step == 0:  # Only for first batch per epoch
+                # Track gradients
+                if train_step == 0:
                     total_grad_norm = grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm
 
-                total_loss += loss.item() # accumulate loss for logging
+                total_loss += loss.item()
                 total_value_loss += value_loss.item()
                 total_policy_loss += policy_loss.item()
 
             avg_loss = total_loss / n_train_steps
-
             avg_value_loss = total_value_loss / n_train_steps
             avg_policy_loss = total_policy_loss / n_train_steps
 
@@ -584,8 +508,6 @@ def train():
                 "total_successes": total_successes,
                 "success_rate": recent_success_rate,
                 "best_rank": best_rank_found,
-                # "temperature": temperature,
-                # "epsilon": eps_greedy
             })
 
             epoch_step += 1
@@ -596,12 +518,7 @@ def train():
                 "epoch/value_loss": avg_value_loss,
                 "epoch/policy_loss": avg_policy_loss,
                 "epoch/learning_rate": current_lr,
-                # "epoch/replay_buffer_size": len(replay_buffer),
                 "epoch/best_rank_found": best_rank_found,
-                # # "temperature": temperature,
-                # # "epsilon": eps_greedy,
-                # "epoch/epoch_successes": epoch_successes,
-                # "epoch/total_successes": total_successes,
                 "epoch/success_rate": recent_success_rate,
             })
         
@@ -647,9 +564,10 @@ def train():
         
             # Save Checkpoint
             if (epoch+1) % 10 == 0:
-                if not os.path.exists("checkpoints"):
-                    os.makedirs("checkpoints")
-                torch.save(net.state_dict(), f"checkpoints/latest_model.pth")
+                if not os.path.exists("checkpoints/dense_cold_3x3"):  # Updated path
+                    os.makedirs("checkpoints/dense_cold_3x3")
+                torch.save(net.state_dict(), f"checkpoints/dense_cold_3x3/latest_model.pth")
+                print(f"Checkpoint saved!")
     finally:
         print("Stopping Visualizer Server...")
         viz.stop()
