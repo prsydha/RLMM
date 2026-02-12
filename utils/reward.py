@@ -3,12 +3,12 @@ import numpy as np
 # Scaled Final Residual Norm reward
 def calc_reward(obs):
     norm = np.linalg.norm(obs)
-    sqrt8 = 8 ** 0.5
+    sqrt27 = 27 ** 0.5
     val = 0
-    if norm <= sqrt8:
-        val = 1 - norm / sqrt8
-    elif norm <= 6:
-        val = (sqrt8 - norm) / (6 - sqrt8)
+    if norm <= sqrt27:
+        val = 1 - norm / sqrt27
+    elif norm <= 10:
+        val = (sqrt27 - norm) / (10 - sqrt27)
     else:
         val = -1
     return val

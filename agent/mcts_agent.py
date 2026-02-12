@@ -39,8 +39,8 @@ class MCTSAgent:
         
         if not root.children:
             print("WARNING: No children after root expansion!", file=sys.stderr)
-            # Return a default action
-            default_action = tuple([0]*4 + [1]*4 + [0]*4)  # u=[0,0,0,0], v=[1,1,1,1], w=[0,0,0,0]
+            # Return a default action for 3x3: u=[0,0,0,0,0,0,0,0,0], v=[1,1,1,1,1,1,1,1,1], w=[0,0,0,0,0,0,0,0,0]
+            default_action = tuple([0]*9 + [1]*9 + [0]*9)
             if return_probs:
                 return default_action, {default_action: 1}
             return default_action
@@ -75,13 +75,7 @@ class MCTSAgent:
             self._backpropagate(search_path, value)
         
         # 3. select best move (greedy with respect to visit count)
-        # Epsilon-greedy: occasionally pick a random action to encourage exploration
-        # if add_noise and random.random() < self.epsilon_greedy:
-        #     # Random action from children
-        #     best_action = random.choice(list(root.children.keys()))
-        # else:
-            # Greedy: pick action with most visits
-            best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
+        best_action = max(root.children.items(), key=lambda item: item[1].visit_count)[0]
 
         if return_probs:
             # return a dictionary: {action_tuple: visit_count}
@@ -111,21 +105,9 @@ class MCTSAgent:
             # the u-value : Upper confidence bound value
             # represents how much 'potential' or 'uncertainty' there is about this move
             # U(s,a) = cpuct * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
-            # where,
-            # Cpuct​ : a constant that controls how aggressive the exploration is. (PUCT stands for: Predictor + Upper Confidence bound applied to Trees.)
-            # P(s,a) : the prior probability of selecting action a in state s (from neural network)
-            # N(s) : total visit count for parent node s
-            # N(s,a) : visit count for child node (s,a)
-            # Potential / Curiosity
             u_value = self.cpuct * child.prior * math.sqrt(node.visit_count) / (1 + child.visit_count)
 
-            # sparsity bonus
-            # we add a small bonus if the action vector is sparse (i.e., has more zeros)
-            # action is a tuple of 12 ints so count how many are 0.
-            # zeros_count = action.count(0)
-            # sparsity_bonus = 0.05 * (zeros_count / len(action))
-
-            score = q_value + u_value  # + sparsity_bonus
+            score = q_value + u_value
 
             if score > best_score:
                 best_score = score
@@ -145,8 +127,8 @@ class MCTSAgent:
             return node.value_sum / max(1, node.visit_count) # return stored value
         
         # check if this state solves the environment
-        # Check norm of just the residual part (first 64 elements)
-        tensor_dim = project_config.TENSOR_DIM  # 64 for 2x2
+        # Check norm of just the residual part (first 729 elements for 3x3x3x3x3x3x3x3x3)
+        tensor_dim = project_config.TENSOR_DIM  # 729 for 3x3
         residual_flat = node.state[:tensor_dim]
         norm = np.linalg.norm(residual_flat)
         
@@ -164,11 +146,11 @@ class MCTSAgent:
         value = value.item() # get scalar value from tensor
         
         # Boost value based on proximity to solution
-        # sqrt(8) ≈ 2.83 is the initial norm, closer to 0 is better
-        sqrt8 = 8 ** 0.5
-        if norm < sqrt8:
+        # sqrt(729) = 27 is the initial norm for 3x3, closer to 0 is better
+        sqrt_tensor_dim = tensor_dim ** 0.5
+        if norm < sqrt_tensor_dim:
             # Already making progress beyond one step - boost the value signal
-            progress_bonus = (sqrt8 - norm) / sqrt8 * 0.5
+            progress_bonus = (sqrt_tensor_dim - norm) / sqrt_tensor_dim * 0.5
             value = min(1.0, value + progress_bonus)
         
         # expansion: sample K actions from the policy head
@@ -182,7 +164,7 @@ class MCTSAgent:
                 u, v, w = self._parse_action(action)
 
                 # 1. Extract residual tensor from flattened state
-                residual = node.state[:tensor_dim].reshape(4, 4, 4)
+                residual = node.state[:tensor_dim].reshape(9, 9, 9)
                 
                 # 2. Extract and update metadata
                 step = node.state[tensor_dim]
@@ -216,9 +198,6 @@ class MCTSAgent:
         for node in reversed(search_path):
             node.visit_count += 1
             node.value_sum += value
-            # for two-player games, we would invert the value here
-            # value = -value
-            # for single-player optimization, value stays positive
     
     def _add_dirichlet_noise(self, node):
         """
@@ -250,7 +229,7 @@ class MCTSAgent:
         temp = 1 #max(0.1, self.temperature)
         probs = [torch.softmax(l / temp, dim=1) for l in logits]
 
-        # Determine vector length (4 for 2x2, 9 for 3x3)
+        # Determine vector length (9 for 3x3)
         L = len(logits) // 3
 
         attempts = 0
@@ -276,7 +255,7 @@ class MCTSAgent:
                 action_list.append(val)
                 joint_prob *= prob_of_idx # product of probabilities for joint distribution
 
-            # split into u, v, w vectors
+            # split into u, v, w vectors (each of length 9 for 3x3)
             u = action_list[0:L]
             v = action_list[L:2*L]
             w = action_list[2*L:3*L]
@@ -292,16 +271,14 @@ class MCTSAgent:
             sampled_results.append((tuple(action_list), joint_prob))
 
         # deduplication scheme: take the first occurrence
-        # here we just use a dict(keeps only unique keys) to keep unique actions and their most recent probability
         unique_actions = {act: prob for act, prob in sampled_results}
         return unique_actions.items()
         
     def _parse_action(self, action_tuple):
-        # Convert tuple of 12 ints to u, v, w arrays
-        # For 2x2, each vector is len 4
-        u = np.array(action_tuple[0:4])
-        v = np.array(action_tuple[4:8])
-        w = np.array(action_tuple[8:12])
+        # Convert tuple of 27 ints to u, v, w arrays (9 each for 3x3)
+        u = np.array(action_tuple[0:9])
+        v = np.array(action_tuple[9:18])
+        w = np.array(action_tuple[18:27])
         return u, v, w
     
     def batch_search(self, root_state, simulations=100, batch_size=8):
@@ -327,7 +304,6 @@ class MCTSAgent:
                 # Traverse until we hit a leaf (unexpanded node) or terminal state
                 while node.is_expanded():
                     # Pick best child using UCB
-                    # IMPORTANT: UCB calculation must see the temporary Virtual Loss!
                     action, node = self._select_child(node)
                     path.append(node)
                     

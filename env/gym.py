@@ -117,26 +117,32 @@ class TensorDecompositionEnv(gym.Env):
 
     def _create_target_tensor(self) -> np.ndarray:
         """
-        Create the target tensor for matrix multiplication.
-
-        For C = A × B where A is m×n and B is nxp:
-        T[i,j,k] = 1 means: C[i,j] += A[i,k] * B[k,j]
-
+        Create the target tensor for matrix multiplication C = A × B.
+        
+        For A (m×n) × B (n×p) = C (m×p):
+        We create a tensor T such that each entry T[i,j,k] represents:
+        - i: index in flattened A (m*n elements)
+        - j: index in flattened B (n*p elements)  
+        - k: index in flattened C (m*p elements)
+        
+        T[i,j,k] = 1 means: C[row_c, col_c] += A[row_a, col_a] * B[row_b, col_b]
+        
         Returns:
-            Target tensor of shape (mn, np, mp)
+            Target tensor of shape (m*n, n*p, m*p)
         """
-        tensor = np.zeros((self.m*self.n, self.n*self.p, self.m*self.p), dtype=float)
-
-        # Standard matrix multiplication tensor
-        for i in range(self.m):
-            for j in range(self.n):
-                for k in range(self.p):
-                    idx_mn = i * self.n + j  # (i,j)
-                    idx_np = j * self.p + k  # (j,k)
-                    idx_mp = i * self.p + k  # (i,k)
-
-                    tensor[idx_mn, idx_np, idx_mp] = 1.0
-
+        # For 3x3: creates (9, 9, 9) tensor
+        tensor = np.zeros((self.m*self.n, self.n*self.p, self.m*self.p), dtype=np.float32)
+        
+        # Standard matrix multiplication: C[i,k] = sum_j(A[i,j] * B[j,k])
+        for i in range(self.m):      # Row of A and C
+            for j in range(self.p):  # Column of B and C
+                for k in range(self.n):  # Column of A, Row of B
+                    a_idx = i * self.n + k  # A[i,k] position
+                    b_idx = k * self.p + j  # B[k,j] position
+                    c_idx = i * self.p + j  # C[i,j] position
+            
+                    tensor[a_idx, b_idx, c_idx] = 1.0
+        
         return tensor
 
     def _is_valid_action(self, u: np.ndarray, v: np.ndarray, w: np.ndarray) -> bool:
@@ -200,11 +206,14 @@ class TensorDecompositionEnv(gym.Env):
         # Flatten residual tensor
         flat_residual = self.residual_tensor.flatten()
         
+        # Calculate actual residual norm (before normalization)
+        residual_norm = np.linalg.norm(self.residual_tensor)
+        
         # Add metadata
         metadata = np.array([
-            self.current_step / self.max_rank,  # Normalized step count
-            len(self.algorithm) / self.max_rank,  # Normalized rank used
-            np.linalg.norm(self.residual_tensor) / 10.0  # Normalized residual norm
+            self.current_step / self.max_rank,      # Normalized step count
+            len(self.algorithm) / self.max_rank,    # Normalized rank used
+            residual_norm / 10.0                    # Normalized residual norm
         ], dtype=np.float32)
         
         # Concatenate
@@ -222,10 +231,7 @@ class TensorDecompositionEnv(gym.Env):
         """
         Calculate reward based on action outcome.
 
-        Full Exploration Reward Structure:
-        - Rewards ANY successful decomposition to encourage exploration
-        - Extra bonuses for efficient solutions (fewer steps)
-        - Dense progress signal to guide learning
+        Updated for 3x3 matrices with proper thresholds.
 
         Args:
             action_valid: Whether action was legal
@@ -241,7 +247,7 @@ class TensorDecompositionEnv(gym.Env):
             return self.illegal_action_penalty
 
         reward = 0.0
-        sqrt8 = 8 ** 0.5  # ~2.83, initial norm for 2x2
+        sqrt27 = 27 ** 0.5  # ~5.196 for 3x3 (initial norm), was sqrt8 = 8**0.5 for 2x2
 
         if self.reward_type == "dense":
             # Dense reward: progress toward zero residual
@@ -251,9 +257,9 @@ class TensorDecompositionEnv(gym.Env):
             reward = progress * 2.0
             
             # Bonus for getting close to solution
-            if curr_norm < sqrt8:
+            if curr_norm < sqrt27:
                 # Proportional bonus for being close
-                closeness_bonus = (sqrt8 - curr_norm) / sqrt8 * 0.5
+                closeness_bonus = (sqrt27 - curr_norm) / sqrt27 * 0.5
                 reward += closeness_bonus
 
             # Bonus for completion - reward ANY solution found
@@ -264,25 +270,27 @@ class TensorDecompositionEnv(gym.Env):
                 reward += 10.0
                 
                 # Efficiency bonus - exponentially reward fewer steps
-                # Reference: Standard algo = 8 steps, Strassen = 7 steps
-                if steps_used <= 8:
-                    # Big bonus for matching or beating standard algorithm
-                    efficiency_bonus = (9 - steps_used) * 8.0  # +8 for 8, +16 for 7, +24 for 6
+                # Reference: Standard algo = 27 steps, Laderman = 23 steps for 3x3
+                if steps_used <= 23:
+                    # Bonus for matching or beating Laderman's algorithm
+                    efficiency_bonus = (24 - steps_used) * 8.0
                     reward += efficiency_bonus
-                elif steps_used <= 12:
-                    # Small positive bonus for any solution under 12 steps
-                    reward += (13 - steps_used) * 1.0
-                # Solutions > 12 steps just get base reward (still positive)
+                elif steps_used <= 27:
+                    # Small bonus for matching standard algorithm
+                    reward += (28 - steps_used) * 2.0
+                # Solutions > 27 steps just get base reward (still positive)
                 
                 if steps_used < self.best_rank:
                     self.best_rank = steps_used
                     reward += 30.0  # Big bonus for new best!
-                    print(f"🏆 NEW BEST: Solved in {steps_used} steps!")
+                    print(f"🏆 NEW BEST: Solved in {steps_used} steps! (Laderman target: 23)")
 
             # Very small penalty for time step (less aggressive)
             reward -= 0.02
 
         else:  # sparse reward (improved)
+            if action_valid:
+                return self.illegal_action_penalty
             if decomposition_complete:
                 steps_used = len(self.algorithm)
                 
@@ -290,19 +298,14 @@ class TensorDecompositionEnv(gym.Env):
                 base_reward = 10.0
                 
                 # Efficiency bonus - reward fewer steps
-                if steps_used <= 7:
-                    efficiency_bonus = (8 - steps_used) * 20.0  # +20 for 7, +40 for 6
-                elif steps_used == 8:
-                    efficiency_bonus = 5.0  # Small bonus for standard algo
+                if steps_used <= 23:
+                    efficiency_bonus = (24 - steps_used) * 20.0  # +20 for 23, +40 for 22, etc.
+                elif steps_used <= 27:
+                    efficiency_bonus = (28 - steps_used) * 5.0   # Small bonus for 24-27
                 else:
-                    efficiency_bonus = max(0, (12 - steps_used) * 1.0)  # Tiny bonus up to 11 steps
+                    efficiency_bonus = 0.0
                 
                 reward = base_reward + efficiency_bonus
-
-                if steps_used < self.best_rank:
-                    self.best_rank = steps_used
-                    reward += 35.0  # Big bonus for improvement
-                    print(f"🏆 NEW BEST: Solved in {steps_used} steps!")
             else:
                 # Shaped reward even in "sparse" mode to guide learning
                 progress = prev_norm - curr_norm
@@ -314,8 +317,8 @@ class TensorDecompositionEnv(gym.Env):
                     reward = progress * 0.5  # Smaller penalty for increasing norm
                 
                 # Bonus for getting very close
-                if curr_norm < sqrt8:
-                    reward += 0.5 * (sqrt8 - curr_norm) / sqrt8
+                if curr_norm < sqrt27:
+                    reward += 0.5 * (sqrt27 - curr_norm) / sqrt27
                 
                 # Small step penalty
                 reward -= 0.02
@@ -329,15 +332,17 @@ class TensorDecompositionEnv(gym.Env):
     ) -> Tuple[np.ndarray, Dict]:
         """
         Reset the environment to initial state.
-
-        Returns:
-            observation: Initial state
-            info: Additional information
         """
         super().reset(seed=seed)
 
         # Reset residual to target
         self.residual_tensor = self.target_tensor.copy()
+        
+        # DEBUG: Print initial state
+        initial_norm = np.linalg.norm(self.residual_tensor)
+        print(f"DEBUG: Reset - Initial residual norm = {initial_norm:.4f}")
+        print(f"DEBUG: Residual tensor shape = {self.residual_tensor.shape}")
+        print(f"DEBUG: Expected norm for {self.m}x{self.n}x{self.p} = {np.sqrt(self.m * self.n * self.p):.4f}")
 
         # Clear algorithm
         self.algorithm = []
@@ -349,9 +354,9 @@ class TensorDecompositionEnv(gym.Env):
         obs = self._get_observation()
 
         info = {
-            "residual_norm": np.linalg.norm(self.residual_tensor),
+            "residual_norm": initial_norm,
             "rank_used": 0,
-            "target_rank": self.m * self.n * self.p,  # Naive algorithm rank
+            "target_rank": self.m * self.n * self.p,
         }
 
         return obs, info

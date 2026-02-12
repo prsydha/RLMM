@@ -7,7 +7,7 @@ class PolicyValueNet(nn.Module):
     '''
     A neural network that outputs both policy logits and a value estimate.
     The network has a shared body and two heads: one for policy and one for value.
-    The policy head outputs logits for 12 independent action coefficients, each with n_actions possible actions.
+    The policy head outputs logits for 27 independent action coefficients, each with n_actions possible actions.
     The value head outputs a single scalar value estimate.
     '''
 
@@ -27,8 +27,8 @@ class PolicyValueNet(nn.Module):
         self.fc3 = nn.Linear(hidden_dim, hidden_dim)
 
         # --- policy head ---
-        # we will be using a facorized policy with 12 independent heads
-        # outputs logits for each of the 12 coefficients independently
+        # we will be using a facorized policy with 27 independent heads (9 for u, 9 for v, 9 for w)
+        # outputs logits for each of the 27 coefficients independently
         self.policy_heads = nn.ModuleList([
             nn.Linear(hidden_dim, n_actions) for _ in range(n_heads)
         ])
@@ -43,7 +43,7 @@ class PolicyValueNet(nn.Module):
         x = F.relu(self.fc2(x))
         body_out = F.relu(self.fc3(x))
 
-        # policy : list of 12 tensors, each of shape (batch_size, n_actions)
+        # policy : list of 27 tensors, each of shape (batch_size, n_actions)
         policy_logits = [head(body_out) for head in self.policy_heads]
 
         # value : scalar tensor of shape (batch_size, 1) - tanhed to be in [-1, 1]

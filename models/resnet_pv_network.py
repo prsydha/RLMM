@@ -68,7 +68,7 @@ class PolicyValueNet(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
         )
         
-        # Separate heads for u, v, w (4 components each for 2x2)
+        # Separate heads for u, v, w (9 components each for 3x3)
         # Using slightly deeper heads for better action discrimination
         self.policy_heads = nn.ModuleList([
             nn.Sequential(
