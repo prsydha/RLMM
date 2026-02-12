@@ -27,7 +27,8 @@ class VisualizerServer:
             print(f"Visualizer Server starting on ws://{self.host}:{self.port}")
             async with websockets.serve(self._handler, self.host, self.port):
                 print(f"Visualizer Server running...")
-                await asyncio.Future() # run forever
+                while self.running:
+                    await asyncio.sleep(0.1)
 
         try:
             self.loop.run_until_complete(runner())
@@ -93,5 +94,5 @@ class VisualizerServer:
 
     def stop(self):
         self.running = False
-        if self.loop:
-            self.loop.call_soon_threadsafe(self.loop.stop)
+        if self.thread:
+            self.thread.join(timeout=2.0)

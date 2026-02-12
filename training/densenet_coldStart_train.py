@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 from pathlib import Path
 import numpy as np
 import torch
@@ -15,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from env.gym import TensorDecompositionEnv
 from agent.mcts_agent import MCTSAgent
 from models.linear_pv_network import PolicyValueNet
-from project.logger import init_logger, log_metrics
+from project.logger import init_logger, log_metrics, finish_logger
 import config as project_config
 from utils.warm_start import generate_demo_data
 from training.visualizer_server import VisualizerServer
@@ -39,10 +40,13 @@ config = {
     "replay_buffer_size": REPLAY_BUFFER_SIZE,
     "epochs": EPOCHS,
     "episodes_per_epoch": EPISODES_PER_EPOCH,
-    "mcts_simulations": MCTS_SIMS,
+    "mcts_simulations": 350,  # Production-ready simulation count
     "checkpoint_interval": 10,
     "device": "cpu"
 }
+
+# Global history for tracking benchmark progress across evaluations
+BENCHMARK_HISTORY = []
 
 
 class PrioritizedReplayBuffer:
@@ -165,20 +169,228 @@ def pretrain_on_expert(net, replay_buffer, device, optimizer, steps=50):
     print(f"{'='*50}\n")
 
 
+def run_benchmark_evaluation(env, algorithm_data, eval_step_counter, global_step, is_final=False):
+    """
+    Run benchmark evaluation comparing naive, Strassen, and agent-discovered algorithms.
+    Measures latency, multiplications, and correctness — logs everything to WandB.
+    
+    This runs on CPU using NumPy so it works regardless of GPU/CuPy availability.
+    """
+    print(f"\n  📊 Running {'Final ' if is_final else '' }Benchmark Evaluation...")
+    
+    # --- 1. Create test matrices ---
+    np.random.seed(42)  # Reproducible benchmark
+    A = np.random.rand(2, 2).astype(np.float32)
+    B = np.random.rand(2, 2).astype(np.float32)
+    C_ref = A @ B  # Reference result (NumPy matmul)
+    
+    n_warmup = 100
+    n_iterations = 1000
+    
+    # --- 2. Naive algorithm (8 multiplications) ---
+    def naive_matmul(A, B):
+        C = np.zeros((2, 2), dtype=np.float32)
+        for i in range(2):
+            for j in range(2):
+                for k in range(2):
+                    C[i, j] += A[i, k] * B[k, j]
+        return C
+    
+    # Warmup
+    for _ in range(n_warmup):
+        naive_matmul(A, B)
+    
+    # Timed runs
+    naive_times = []
+    for _ in range(n_iterations):
+        t0 = time.perf_counter_ns()
+        C_naive = naive_matmul(A, B)
+        t1 = time.perf_counter_ns()
+        naive_times.append((t1 - t0) / 1000.0)  # Convert ns to us
+    
+    naive_latency = float(np.median(naive_times))
+    naive_correct = float(np.max(np.abs(C_naive - C_ref))) < 1e-5
+    naive_error = float(np.max(np.abs(C_naive - C_ref)))
+    
+    # --- 3. Strassen's algorithm (7 multiplications) ---
+    def strassen_matmul(A, B):
+        a00, a01, a10, a11 = A[0,0], A[0,1], A[1,0], A[1,1]
+        b00, b01, b10, b11 = B[0,0], B[0,1], B[1,0], B[1,1]
+        
+        m1 = (a00 + a11) * (b00 + b11)
+        m2 = (a10 + a11) * b00
+        m3 = a00 * (b01 - b11)
+        m4 = a11 * (b10 - b00)
+        m5 = (a00 + a01) * b11
+        m6 = (a10 - a00) * (b00 + b01)
+        m7 = (a01 - a11) * (b10 + b11)
+        
+        C = np.zeros((2, 2), dtype=np.float32)
+        C[0, 0] = m1 + m4 - m5 + m7
+        C[0, 1] = m3 + m5
+        C[1, 0] = m2 + m4
+        C[1, 1] = m1 - m2 + m3 + m6
+        return C
+    
+    for _ in range(n_warmup):
+        strassen_matmul(A, B)
+    
+    strassen_times = []
+    for _ in range(n_iterations):
+        t0 = time.perf_counter_ns()
+        C_strassen = strassen_matmul(A, B)
+        t1 = time.perf_counter_ns()
+        strassen_times.append((t1 - t0) / 1000.0)
+    
+    strassen_latency = float(np.median(strassen_times))
+    strassen_correct = float(np.max(np.abs(C_strassen - C_ref))) < 1e-5
+    strassen_error = float(np.max(np.abs(C_strassen - C_ref)))
+    
+    # --- 4. Agent's algorithm ---
+    rank1_tensors = algorithm_data.get('rank1_tensors', [])
+    num_agent_mults = len(rank1_tensors)
+    
+    def agent_matmul(A, B, tensors):
+        """Execute the agent's discovered decomposition."""
+        A_flat = A.flatten()  # [a00, a01, a10, a11]
+        B_flat = B.flatten()  # [b00, b01, b10, b11]
+        C = np.zeros((2, 2), dtype=np.float32)
+        
+        for tensor in tensors:
+            u = np.array(tensor['u'], dtype=np.float32)
+            v = np.array(tensor['v'], dtype=np.float32)
+            w = np.array(tensor['w'], dtype=np.float32)
+            
+            # Linear combo of A entries weighted by u
+            a_combo = np.dot(u, A_flat)
+            # Linear combo of B entries weighted by v
+            b_combo = np.dot(v, B_flat)
+            # Scalar multiplication
+            product = a_combo * b_combo
+            # Distribute to output via w
+            C_flat = w * product
+            C += C_flat.reshape(2, 2)
+        
+        return C
+    
+    for _ in range(n_warmup):
+        agent_matmul(A, B, rank1_tensors)
+    
+    agent_times = []
+    for _ in range(n_iterations):
+        t0 = time.perf_counter_ns()
+        C_agent = agent_matmul(A, B, rank1_tensors)
+        t1 = time.perf_counter_ns()
+        agent_times.append((t1 - t0) / 1000.0)
+    
+    agent_latency = float(np.median(agent_times))
+    agent_error = float(np.max(np.abs(C_agent - C_ref)))
+    agent_correct = agent_error < 1e-5
+    
+    # --- 5. Compute derived metrics ---
+    speedup_vs_naive = naive_latency / agent_latency if agent_latency > 0 else 0
+    speedup_vs_strassen = strassen_latency / agent_latency if agent_latency > 0 else 0
+    
+    global BENCHMARK_HISTORY
+    
+    # --- 6. Initialize History with Baselines (if first run) ---
+    if not BENCHMARK_HISTORY:
+        # Columns: [Algorithm, Latency (us), Mults, Speedup, Correct]
+        strassen_vs_naive = naive_latency / strassen_latency if strassen_latency > 0 else 0
+        BENCHMARK_HISTORY.append(["Naive", round(naive_latency, 3), 8, "1.00x", "✅" if naive_correct else "❌"])
+        BENCHMARK_HISTORY.append(["Strassen", round(strassen_latency, 3), 7, f"{strassen_vs_naive:.2f}x", "✅" if strassen_correct else "❌"])
+    
+    # --- 7. Append current Agent performance ---
+    agent_label = f"Agent (Epoch {eval_step_counter*5})" if not is_final else "Final Agent"
+    BENCHMARK_HISTORY.append([
+        agent_label, 
+        round(agent_latency, 3), 
+        num_agent_mults, 
+        f"{speedup_vs_naive:.2f}x", 
+        "✅" if agent_correct else "❌"
+    ])
+    
+    # --- 8. Log Standard WandB Table (Clean & Expandable) ---
+    table = wandb.Table(
+        columns=["Algorithm", "Latency (us)", "Multiplications", "Speedup (vs Naive)", "Correct"],
+        data=BENCHMARK_HISTORY
+    )
+    
+    # Logging the table. In WandB, click the 'Expand' icon on this tile to view full-screen & zoom.
+    log_metrics({
+        "Benchmark_Performance_Summary": table
+    }, step=global_step)
+    
+    # --- 9. Log Bar Charts (Latest Comparison only) ---
+    # Latency bar chart
+    latency_table = wandb.Table(
+        data=[
+            ["Naive", naive_latency],
+            ["Strassen", strassen_latency],
+            ["Agent", agent_latency],
+        ],
+        columns=["Algorithm", "Latency (us)"]
+    )
+    log_metrics({
+        "benchmark/latency_chart": wandb.plot.bar(
+            latency_table, "Algorithm", "Latency (us)",
+            title=f"Benchmark: Latency Comparison (us) {'- FINAL' if is_final else ''}"
+        )
+    }, step=global_step)
+    
+    # Multiplications bar chart
+    mult_table = wandb.Table(
+        data=[
+            ["Naive", 8],
+            ["Strassen", 7],
+            ["Agent", num_agent_mults],
+        ],
+        columns=["Algorithm", "Multiplications"]
+    )
+    log_metrics({
+        "benchmark/multiplications_chart": wandb.plot.bar(
+            mult_table, "Algorithm", "Multiplications",
+            title=f"Benchmark: Multiplication Count {'- FINAL' if is_final else ''}"
+        )
+    }, step=global_step)
+
+    # Also update run summary for the overview page
+    if wandb.run is not None:
+        wandb.run.summary["Final_Benchmark_Summary"] = table
+    
+    # --- 9. Print summary (Console) ---
+    print(f"  ┌────────────────────────────────────────────────────────────┐")
+    print(f"  │  BENCHMARK RESULTS {'(FINAL)' if is_final else ''}                  │")
+    print(f"  ├──────────────┬──────────────┬───────┬─────────────────────┤")
+    print(f"  │ Algorithm    │ Latency (us) │ Mults │ Correct             │")
+    print(f"  ├──────────────┼──────────────┼───────┼─────────────────────┤")
+    print(f"  │ Naive        │ {naive_latency:>12.3f} │     8 │ {'✅' if naive_correct else '❌'}               │")
+    print(f"  │ Strassen     │ {strassen_latency:>12.3f} │     7 │ {'✅' if strassen_correct else '❌'}               │")
+    print(f"  │ Agent        │ {agent_latency:>12.3f} │ {num_agent_mults:>5} │ {'✅' if agent_correct else '❌'}               │")
+    print(f"  ├──────────────┴──────────────┴───────┴─────────────────────┤")
+    print(f"  │ Agent speedup vs Naive: {speedup_vs_naive:.2f}x                         │")
+    print(f"  │ Agent speedup vs Strassen: {speedup_vs_strassen:.2f}x                      │")
+    print(f"  └────────────────────────────────────────────────────────────┘")
+    
+    return {} # Return empty instead of scalars to avoid accidental logging 
+
+
+
 def train():
     # 1. setup
     device = torch.device(config["device"])
     print(f"Training on device: {device}")
     
-    # GPU info
-    if torch.cuda.is_available():
+    # GPU info - only show if using CUDA
+    if config["device"] == "cuda" and torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
         print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
         print(f"CUDA Version: {torch.version.cuda}")
         torch.cuda.empty_cache()  # Clear cache before training
+    elif config["device"] == "cuda":
+        print("⚠️ WARNING: CUDA requested but not available. Falling back to CPU.")
     else:
-        print("⚠️ WARNING: Running on CPU - training will be MUCH slower!")
-        print("   If you have a GPU, make sure CUDA is properly installed.")
+        print("Using CPU for training as requested.")
 
     # initialize Environment, Network and Optimizer
     env = TensorDecompositionEnv(matrix_size=config["matrix_size"], max_rank=config["max_rank"])
@@ -299,8 +511,8 @@ def train():
             for episode in range(EPISODES_PER_EPOCH):
                 obs, info = env.reset()
                 # Create fresh MCTS for each episode with current exploration params
-                mcts = MCTSAgent(model=net, env=env, n_simulations=MCTS_SIMS, 
-                                device=config["device"])
+                mcts = MCTSAgent(model=net, env=env, n_simulations=config["mcts_simulations"], 
+                                device=device)
 
                 episode_data = [] # Stores (state, action_dist) for this game
                 steps = 0
@@ -363,7 +575,7 @@ def train():
                     "step/action_valid": int(info["action_valid"]),
                     "step/action_sparsity": action_sparsity,
                     "step/action": action
-                    })
+                    }, step=global_step)
                 
                     # Calculate live reward/status for visualization
                     curr_norm = info["residual_norm"]
@@ -441,20 +653,15 @@ def train():
                     print(f"  ❌ Episode {episode+1} FAILED: Steps={steps}, Result={final_value:.3f}, Residual={res_norm:.4e}")
 
                 # --------------------
-                # Episode summary table
+                # Episode Log
                 # --------------------
                 episode_step += 1
-                table = wandb.Table(columns=["Epoch", "Episode", "Reward", "Residual", "Rank", "Solved"])
-                table.add_data(
-                    epoch,
-                    episode,
-                    final_value,
-                    info["residual_norm"],
-                    info["rank_used"],
-                    episode_solved
-                )
-
-                log_metrics({"episode/summary": table,"episode/final_value":final_value, "episode_step" : episode_step})
+                log_metrics({
+                    "episode/final_value": final_value, 
+                    "episode/rank_used": info["rank_used"],
+                    "episode/residual_norm": info["residual_norm"],
+                    "episode_step": episode_step
+                }, step=global_step)
 
                 # Store episode data with success flag for prioritized replay
                 for data in episode_data:
@@ -603,7 +810,7 @@ def train():
                 # "epoch/epoch_successes": epoch_successes,
                 # "epoch/total_successes": total_successes,
                 "epoch/success_rate": recent_success_rate,
-            })
+            }, step=global_step)
         
             # Step learning rate scheduler
             scheduler.step()
@@ -613,7 +820,7 @@ def train():
                 print(f"\n  === Evaluation Phase ===")
                 net.eval()
                 eval_obs, eval_info = env.reset()
-                eval_mcts = MCTSAgent(model=net, env=env, n_simulations=MCTS_SIMS*2, device=device, temperature=0.01)
+                eval_mcts = MCTSAgent(model=net, env=env, n_simulations=config["mcts_simulations"]*2, device=device, temperature=0.01)
                 eval_steps = 0
                 eval_done = False
             
@@ -627,23 +834,18 @@ def train():
                 
                 eval_residual = np.linalg.norm(eval_obs[:project_config.TENSOR_DIM])
                 print(f"  Eval: Steps={eval_steps}, Rank={eval_info['rank_used']}, Residual={eval_residual:.4e}, Success={eval_terminated}")
-            
-                # Track best solution
-                if eval_terminated and eval_info['rank_used'] < best_rank_found:
-                    best_rank_found = eval_info['rank_used']
-                    print(f"  🎉 New best rank found: {best_rank_found}!")
-                    epochs_without_improvement = 0
-                else:
-                    epochs_without_improvement += 1
                 
+                # Evaluation step counter for internal tracking
                 eval_step += 1
-                log_metrics({
-                    "eval_step":eval_step,
-                    "eval/steps": eval_steps,
-                    "eval/rank": eval_info['rank_used'],
-                    "eval/residual": eval_info['residual_norm'],
-                    "eval/success": int(eval_terminated)
-                })
+                
+                # ==========================================
+                # BENCHMARK: Latency, Multiplications, etc.
+                # ==========================================
+                algorithm_data = env.get_algorithm_description()
+                try:
+                    run_benchmark_evaluation(env, algorithm_data, eval_step, global_step)
+                except Exception as e:
+                    print(f"  ⚠️ Benchmark evaluation failed: {e}")
         
             # Save Checkpoint
             if (epoch+1) % 10 == 0:
@@ -654,16 +856,55 @@ def train():
         print("Stopping Visualizer Server...")
         viz.stop()
     
-    # Run benchmark visualization after training
+    # ==========================================
+    # FINAL BENCHMARK after all training
+    # ==========================================
     try:
-        print("\n" + "="*50)
-        print("Running benchmark update with trained agent...")
-        subprocess.call([sys.executable, "update_benchmark.py"])
-        subprocess.call([sys.executable, "visualize_benchmark.py"])
-        print("="*50)
+        print("\n" + "="*60)
+        print("FINAL BENCHMARK - Post-Training Evaluation")
+        print("="*60)
+        
+        # Run one last eval episode to get the final algorithm
+        net.eval()
+        final_obs, final_info = env.reset()
+        final_mcts = MCTSAgent(model=net, env=env, n_simulations=config["mcts_simulations"]*2, device=device, temperature=0.01)
+        final_done = False
+        final_steps = 0
+        
+        while not final_done and final_steps < config["max_rank"]:
+            final_action = final_mcts.search(final_obs, add_noise=False)
+            u, v, w = final_mcts._parse_action(final_action)
+            final_obs, _, final_terminated, final_truncated, final_info = env.step({'u': u, 'v': v, 'w': w})
+            final_done = final_terminated or final_truncated
+            final_steps += 1
+        
+        algorithm_data = env.get_algorithm_description()
+        print(f"Final agent: {algorithm_data['num_multiplications']} multiplications, "
+              f"residual={algorithm_data['verification']['residual_norm']:.4e}, "
+              f"complete={algorithm_data['verification']['complete']}")
+        
+        eval_step += 1
+        run_benchmark_evaluation(env, algorithm_data, eval_step, global_step, is_final=True)
+        
+        print("="*60)
     except Exception as e:
-        print(f"Failed to run benchmark update: {e}")
+        print(f"Failed to run final benchmark: {e}")
+    
+    # Also run the GPU benchmark if CuPy is available (separate WandB run)
+    try:
+        project_root = Path(__file__).parent.parent
+        print("\nAttempting GPU benchmark (separate run)...")
+        # Use run with timeout to prevent hanging the whole script
+        subprocess.run([sys.executable, str(project_root / "update_benchmark.py")], cwd=str(project_root), timeout=60)
+        subprocess.run([sys.executable, str(project_root / "visualize_benchmark.py")], cwd=str(project_root), timeout=60)
+    except subprocess.TimeoutExpired:
+        print("⚠️ GPU benchmark timed out after 60s.")
+    except Exception as e:
+        print(f"GPU benchmark skipped: {e}")
+    
+    # Properly close WandB
+    finish_logger()
+    print("\n✅ Training complete. All metrics logged to WandB.")
 
 if __name__ == "__main__":
     train()
-

@@ -12,7 +12,8 @@ def init_logger(config, offline=False):
         filename="training.log",
         level=logging.INFO,
         format="%(asctime)s - %(message)s",
-        force=True  # Override existing basicConfig
+        force=True,  # Override existing basicConfig
+        encoding="utf-8"
     )
     
     try:
@@ -23,7 +24,7 @@ def init_logger(config, offline=False):
             "name": config.get("run_name"),
             "config": config,
             "mode": mode,
-            "reinit": True  # Allow reinit in case of previous runs
+            "reinit": "finish_previous"  # Allow reinit in case of previous runs
         }
         if "entity" in config:
             init_kwargs["entity"] = config["entity"]
