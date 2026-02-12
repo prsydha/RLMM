@@ -58,7 +58,7 @@ class TensorDecompositionEnv(gym.Env):
             matrix_size: Tuple[int, int, int] = (2, 2, 2),
             max_rank: int = 20,
             reward_type: str = "sparse",
-            illegal_action_penalty: float = -50.0,
+            illegal_action_penalty: float = -10.0,
     ):
         """
         Initialize the tensor decomposition environment.
@@ -289,9 +289,9 @@ class TensorDecompositionEnv(gym.Env):
             reward -= 0.02
 
         else:  # sparse reward (improved)
-            if action_valid:
+            if not action_valid:
                 return self.illegal_action_penalty
-            if decomposition_complete:
+            elif decomposition_complete:
                 steps_used = len(self.algorithm)
                 
                 # Base completion reward - always positive
