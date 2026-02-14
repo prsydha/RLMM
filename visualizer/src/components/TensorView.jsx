@@ -1,15 +1,15 @@
-
 import React from 'react'
 
 export default function TensorView({ action }) {
     if (!action || !action.u) return null
 
-    // U, V, W are arrays of shape [Rank, Dim]
-    // Ideally we want to show them side by side
-
     return (
         <div className="tensor-view-panel">
-            <h3 className="tensor-header">Tensor Factors (Rank Components)</h3>
+            <div className="tensor-header-row">
+                <h3 className="tensor-header">TENSOR FACTORS</h3>
+                <div className="tensor-badge">RANK {action.u.length}</div>
+            </div>
+
             <div className="factors-container">
                 <FactorHeatmap label="U (Left)" data={action.u} color="#00f2fe" />
                 <div className="multiply-symbol">×</div>
@@ -19,30 +19,42 @@ export default function TensorView({ action }) {
             </div>
             <style>{`
             .tensor-view-panel {
-                background: rgba(42, 43, 56, 0.3);
-                padding: 15px;
-                border-radius: 8px;
-                margin-top: 20px;
-                border: 1px solid rgba(255,255,255,0.05);
+                width: 100%;
+            }
+            .tensor-header-row {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 20px;
+                border-bottom: 1px solid rgba(255,255,255,0.1);
+                padding-bottom: 10px;
             }
             .tensor-header {
-                font-size: 0.8rem;
+                font-size: 12px;
                 text-transform: uppercase;
-                letter-spacing: 1px;
-                color: #888;
-                margin-bottom: 15px;
-                text-align: center;
+                letter-spacing: 2px;
+                color: #94a3b8;
+                font-weight: 700;
+            }
+            .tensor-badge {
+                font-size: 10px;
+                background: rgba(255,255,255,0.1);
+                padding: 2px 8px;
+                border-radius: 4px;
+                color: #fff;
             }
             .factors-container {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 15px;
+                gap: 20px;
                 overflow-x: auto;
+                padding-bottom: 10px;
             }
             .multiply-symbol {
-                font-size: 1.5rem;
-                color: #555;
+                font-size: 20px;
+                color: rgba(255,255,255,0.2);
+                font-weight: 300;
             }
         `}</style>
         </div>
@@ -50,12 +62,9 @@ export default function TensorView({ action }) {
 }
 
 function FactorHeatmap({ label, data, color }) {
-    // Data is array of [Rank, Vector] or similar list of lists
     if (!data || data.length === 0) return null
 
-    // Determine dimensions and normalize to 2D
     let gridData = data
-    // Check if first element is not an array (i.e. it's a number) -> 1D array
     if (data.length > 0 && !Array.isArray(data[0])) {
         gridData = [data]
     }
@@ -65,35 +74,38 @@ function FactorHeatmap({ label, data, color }) {
 
     return (
         <div className="heatmap-wrapper">
-            <div className="heatmap-label" style={{ color: color }}>{label}</div>
+            <div className="heatmap-label" style={{ color: color, textShadow: `0 0 10px ${color}40` }}>{label}</div>
             <div className="heatmap-grid" style={{
                 display: 'grid',
                 gridTemplateColumns: `repeat(${cols}, 1fr)`,
-                gap: '1px',
-                background: '#000'
+                gap: '2px',
+                background: 'rgba(0,0,0,0.5)',
+                padding: '4px',
+                borderRadius: '4px',
+                border: `1px solid ${color}30`
             }}>
                 {gridData.map((row, i) => (
                     row.map((val, j) => {
-                        // Normalize val for opacity/color
-                        // Expecting -1, 0, 1 mostly
                         const opacity = Math.abs(val)
-                        const bgColor = val !== 0 ? color : '#1a1b26'
+                        const bgColor = val !== 0 ? color : 'transparent'
 
                         return (
-                            <div key={`${i}-${j}`} style={{
-                                width: '20px',
-                                height: '20px',
+                            <div key={`${i}-${j}`} className="heatmap-cell" style={{
+                                width: '24px',
+                                height: '24px',
                                 background: bgColor,
-                                opacity: val !== 0 ? (val < 0 ? 0.7 : 1) : 1,
-                                border: val < 0 ? `1px solid ${color}` : '1px solid rgba(255,255,255,0.1)',
+                                opacity: val !== 0 ? (val < 0 ? 0.6 : 0.9) : 0.1,
+                                border: val < 0 ? `1px solid ${color}` : '1px solid rgba(255,255,255,0.05)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                fontSize: '0.65rem',
+                                fontSize: '10px',
                                 color: '#fff',
-                                fontWeight: 'bold'
+                                fontWeight: 'bold',
+                                borderRadius: '2px',
+                                transition: 'all 0.2s ease'
                             }} title={`[${i},${j}] = ${val}`}>
-                                {val !== 0 ? val : ''}
+                                {val !== 0 ? Math.round(val) : ''}
                             </div>
                         )
                     })
@@ -106,13 +118,16 @@ function FactorHeatmap({ label, data, color }) {
                 align-items: center;
             }
             .heatmap-label {
-                font-size: 0.7rem;
-                margin-bottom: 5px;
-                font-weight: bold;
+                font-size: 11px;
+                margin-bottom: 8px;
+                font-weight: 600;
+                letter-spacing: 1px;
+                text-transform: uppercase;
             }
-            .heatmap-grid {
-                border: 1px solid #333;
-                padding: 2px;
+            .heatmap-cell:hover {
+                transform: scale(1.2);
+                z-index: 10;
+                box-shadow: 0 0 10px rgba(0,0,0,0.5);
             }
         `}</style>
         </div>
