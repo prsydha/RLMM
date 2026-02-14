@@ -31,7 +31,7 @@ EPISODES_PER_EPOCH = project_config.EPISODES_PER_EPOCH
 MCTS_SIMS = project_config.MCTS_SIMS
 
 config = {
-    "run_name": "RLMM_resNet_and_warmStart",
+    "run_name": "RLMM_resNet_and_coldStart",
     "matrix_size": (2, 2, 2),
     "max_rank": project_config.MAX_STEPS,  # Use config value (20 for full exploration)
     "learning rate": LEARNING_RATE,
@@ -41,7 +41,7 @@ config = {
     "episodes_per_epoch": EPISODES_PER_EPOCH,
     "mcts_simulations": MCTS_SIMS,
     "checkpoint_interval": 10,
-    "device": "cuda"
+    "device": "cpu"
 }
 
 
@@ -50,7 +50,7 @@ class PrioritizedReplayBuffer:
     Replay buffer that samples successful episodes more frequently.
     This is critical for learning from sparse rewards.
     """
-    def __init__(self, maxlen, success_weight=3.0):
+    def __init__(self, maxlen, success_weight=1.0):
         self.buffer = deque(maxlen=maxlen)
         self.success_weight = success_weight
         
@@ -208,7 +208,7 @@ def train():
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=2, eta_min=1e-5)
 
     # Prioritized Replay Buffer: samples successful episodes more frequently
-    replay_buffer = PrioritizedReplayBuffer(maxlen=REPLAY_BUFFER_SIZE, success_weight=5.0)
+    replay_buffer = PrioritizedReplayBuffer(maxlen=REPLAY_BUFFER_SIZE, success_weight=1.1)
     
     # Track best performance
     best_rank_found = config["max_rank"]
@@ -221,22 +221,22 @@ def train():
     # WARM START WITH EXPERT DEMONSTRATIONS
     # This is CRITICAL for learning to work!
     # ============================================
-    print("\n" + "="*60)
-    print("INITIALIZING WARM START WITH EXPERT DEMONSTRATIONS")
-    print("="*60)
+    # print("\n" + "="*60)
+    # print("INITIALIZING WARM START WITH EXPERT DEMONSTRATIONS")
+    # print("="*60)
     
-    demo_data = generate_demo_data(env)
-    # Convert demo data format: (state, target, value) -> (state, target, value, is_success)
-    demo_with_success = [(s, t, v, True) for s, t, v in demo_data]
+    # demo_data = generate_demo_data(env)
+    # # Convert demo data format: (state, target, value) -> (state, target, value, is_success)
+    # demo_with_success = [(s, t, v, True) for s, t, v in demo_data]
     
-    # Inject expert demonstrations multiple times
-    for _ in range(project_config.WARM_START_COPIES):
-        replay_buffer.extend(demo_with_success)
+    # # Inject expert demonstrations multiple times
+    # for _ in range(project_config.WARM_START_COPIES):
+    #     replay_buffer.extend(demo_with_success)
 
-    print(f"✅ Replay Buffer initialized with {len(replay_buffer)} expert samples.")
+    # print(f"✅ Replay Buffer initialized with {len(replay_buffer)} expert samples.")
 
-    # Pre-train the network on expert data before starting MCTS
-    pretrain_on_expert(net, replay_buffer, device, optimizer, steps=project_config.PRE_TRAIN_STEPS)
+    # # Pre-train the network on expert data before starting MCTS
+    # pretrain_on_expert(net, replay_buffer, device, optimizer, steps=project_config.PRE_TRAIN_STEPS)
 
     # --------------------
     # 2. Main Training Loop

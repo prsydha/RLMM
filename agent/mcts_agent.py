@@ -8,7 +8,7 @@ import config as project_config
 VIRTUAL_LOSS = 1.0
 
 class MCTSAgent:
-    def __init__(self, model, env, n_simulations=100, cpuct=None, device='cpu', temperature=1.0, epsilon_greedy=None):
+    def __init__(self, model, env, n_simulations=100, cpuct=2.0, device='cpu', temperature=1.0, epsilon_greedy=None):
         self.model = model
         self.env = env # copy of the environment for simulations
         self.n_simulations = n_simulations
@@ -173,7 +173,7 @@ class MCTSAgent:
         
         # expansion: sample K actions from the policy head
         # k=25 for full exploration mode (more diverse actions to try)
-        top_k_actions = self._sample_actions(policy_logits, k=25)
+        top_k_actions = self._sample_actions(policy_logits, k=50)
 
         # instantiate child nodes for each action
         for action, action_prob in top_k_actions:
