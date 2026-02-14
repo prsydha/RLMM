@@ -1,13 +1,14 @@
-
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import TrainingMonitor from './components/TrainingMonitor'
 import ControlPanel from './components/ControlPanel'
 import TerminalPanel from './components/TerminalPanel'
 import TensorView from './components/TensorView'
+import MatrixVisualizer from './components/MatrixVisualizer'
 
 export default function App() {
   const [connected, setConnected] = useState(false)
   const [logs, setLogs] = useState([])
+  const [show3D, setShow3D] = useState(true)
 
   // Track stats
   const [stats, setStats] = useState({
@@ -81,38 +82,69 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>⚡ Matrix Core</h1>
+        <h1>TensorMind</h1>
         <div className="status-bar">
+          <button
+            className="btn-secondary"
+            style={{ padding: '4px 12px', fontSize: '11px' }}
+            onClick={() => setShow3D(!show3D)}
+          >
+            {show3D ? 'HIDE 3D VIEW' : 'SHOW 3D VIEW'}
+          </button>
           <span className={`status-indicator ${connected ? 'online' : 'offline'}`}>
             {connected ? 'ONLINE' : 'OFFLINE'}
           </span>
-          <span className="version">v2.1.0-NEON</span>
+          <span className="version">v3.0.0-CYBER</span>
         </div>
       </header>
 
       <div className="main-layout">
         <div className="left-panel">
-          <div className="visualizer-container" style={{ display: 'flex', flexDirection: 'column' }}>
-            {/* Top Half: Monitor */}
-            <div style={{ flex: 1, minHeight: '300px' }}>
-              <TrainingMonitor
-                onStatsUpdate={handleStatsUpdate}
-                onConnectionChange={setConnected}
-                onLog={addLog}
-              />
+          <div className="panel-glass visualizer-container" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
+
+            {/* 3D Matrix Visualizer Layer */}
+            {show3D && (
+              <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0 }}>
+                <MatrixVisualizer
+                  running={connected}
+                  speed={1}
+                  onStatsUpdate={() => { }}
+                  onConnectionChange={() => { }}
+                  onLog={() => { }}
+                />
+              </div>
+            )}
+
+            {/* Top Half: Monitor Overlay */}
+            <div style={{ flex: 1, zIndex: 1, pointerEvents: 'none' }}>
+              <div style={{ width: '100%', height: '100%', padding: '20px' }}>
+                <TrainingMonitor
+                  onStatsUpdate={handleStatsUpdate}
+                  onConnectionChange={setConnected}
+                  onLog={addLog}
+                  compact={true}
+                />
+              </div>
             </div>
 
             {/* Bottom Half: Tensor Visualizer */}
             {stats.action && (
-              <div style={{ padding: '20px', background: '#0d0e12', borderTop: '1px solid #333' }}>
+              <div style={{ padding: '20px', background: 'rgba(5,5,10,0.8)', borderTop: '1px solid rgba(255,255,255,0.1)', zIndex: 2 }}>
                 <TensorView action={stats.action} />
               </div>
             )}
           </div>
-          <TerminalPanel logs={logs} />
+
+          <div className="panel-glass terminal-panel">
+            <div className="terminal-header">
+              <div className="mac-dots"><span></span><span></span><span></span></div>
+              <span style={{ opacity: 0.5 }}>TERMINAL // AGENT_LOGS</span>
+            </div>
+            <TerminalPanel logs={logs} />
+          </div>
         </div>
 
-        <div className="right-panel">
+        <div className="right-panel panel-glass">
           <ControlPanel
             connected={connected}
             stats={stats}

@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState } from 'react'
 
 export default function TrainingMonitor({
@@ -6,7 +5,8 @@ export default function TrainingMonitor({
   paused,
   onStatsUpdate,
   onConnectionChange,
-  onLog
+  onLog,
+  compact = false
 }) {
   const wsRef = useRef(null)
   const reconnectTimeoutRef = useRef(null)
@@ -17,11 +17,8 @@ export default function TrainingMonitor({
     isMountedRef.current = true
 
     const connect = () => {
-      // Prevent multiple connections
-      if (wsRef.current) {
-        if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
-          return
-        }
+      if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+        return
       }
 
       try {
@@ -43,13 +40,11 @@ export default function TrainingMonitor({
           try {
             const data = JSON.parse(event.data)
 
-            // Handle different message types
             if (data.type === 'log') {
               if (onLog) onLog(data.message, data.level || 'info')
             } else if (data.type === 'stats') {
               if (onStatsUpdate) onStatsUpdate(data.data)
             } else if (data.type === 'step') {
-              // Update local state for visualization
               setCurrentMetrics({
                 episode: data.episode,
                 reward: data.reward,
@@ -58,7 +53,6 @@ export default function TrainingMonitor({
                 step: data.step_count
               })
 
-              // Update parent state
               if (onStatsUpdate) {
                 onStatsUpdate({
                   step: data.global_step,
@@ -92,19 +86,16 @@ export default function TrainingMonitor({
             console.log('❌ Disconnected')
             onConnectionChange(false)
             wsRef.current = null
-            // Only auto-reconnect if we are still mounted
             reconnectTimeoutRef.current = setTimeout(connect, 3000)
           }
         }
 
         ws.onerror = (err) => {
           console.error('WebSocket error', err)
-          // wsRef.current = null // Let onclose handle this
         }
 
       } catch (err) {
         if (isMountedRef.current) {
-          console.error('Connection failed', err)
           reconnectTimeoutRef.current = setTimeout(connect, 3000)
         }
       }
@@ -115,103 +106,136 @@ export default function TrainingMonitor({
     return () => {
       isMountedRef.current = false
       if (wsRef.current) {
-        // Remove listener to prevent onclose triggering reconnect
         wsRef.current.onclose = null
         wsRef.current.close()
         wsRef.current = null
       }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current)
-        reconnectTimeoutRef.current = null
       }
     }
   }, [onStatsUpdate, onConnectionChange, onLog])
 
+  if (!currentMetrics) {
+    return (
+      <div className="monitor-container empty">
+        <div className="loader"></div>
+        <div className="monitor-status">WAITING FOR SIGNAL...</div>
+        <style>{`
+                 .monitor-container.empty {
+                     display: flex;
+                     flex-direction: column;
+                     align-items: center;
+                     justify-content: center;
+                     height: 100%;
+                     opacity: 0.7;
+                 }
+                 .loader {
+                     width: 40px; height: 40px;
+                     border: 2px solid rgba(0,242,254,0.3);
+                     border-top-color: #00f2fe;
+                     border-radius: 50%;
+                     animation: spin 1s linear infinite;
+                     margin-bottom: 15px;
+                 }
+                 .monitor-status {
+                     font-size: 12px;
+                     letter-spacing: 2px;
+                     color: #00f2fe;
+                 }
+                 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+             `}</style>
+      </div>
+    )
+  }
+
   return (
-    <div className="training-monitor" style={{
-      padding: '30px',
-      color: '#e0e0e0',
-      fontFamily: "'Roboto Mono', monospace",
-      height: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      background: 'radial-gradient(circle at center, #1a1a2e 0%, #0a0a15 100%)',
-      border: '1px solid rgba(0, 242, 254, 0.1)',
-      borderRadius: '12px',
-      boxShadow: '0 0 20px rgba(0,0,0,0.5)'
-    }}>
-      <div style={{ marginBottom: 'auto', textAlign: 'center' }}>
-        <h2 style={{ color: '#00f2fe', textShadow: '0 0 10px rgba(0,242,254,0.5)' }}>RUNNING AGENT</h2>
-        <div style={{ fontSize: '0.9rem', opacity: 0.7 }}>AWAITING STEPS FROM TRAIN.PY</div>
+    <div className="monitor-container">
+      <div className="monitor-header">
+        <div className="live-dot"></div>
+        <span>LIVE TRAINING // AGENT_INTERCEPT</span>
       </div>
 
-      {currentMetrics ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', width: '100%' }}>
-          <MetricCard label="EPISODE" value={currentMetrics.episode} color="#fff" />
-          <MetricCard label="STEP" value={currentMetrics.step} color="#fff" />
+      <div className="metrics-grid">
+        <MetricCard label="EPISODE" value={currentMetrics.episode} />
+        <MetricCard label="STEP" value={currentMetrics.step} />
 
-          <MetricCard
-            label="REWARD"
-            value={currentMetrics.reward.toFixed(4)}
-            color={currentMetrics.reward > 0 ? '#43e97b' : '#ff6b6b'}
-            large
-          />
+        <MetricCard
+          label="REWARD"
+          value={currentMetrics.reward.toFixed(4)}
+          highlight
+          color={currentMetrics.reward > 0 ? '#43e97b' : '#ff6b6b'}
+        />
 
-          <MetricCard
-            label="RESIDUAL"
-            value={currentMetrics.residual.toFixed(2)}
-            color="#f0932b"
-          />
+        <MetricCard
+          label="RESIDUAL"
+          value={currentMetrics.residual.toFixed(2)}
+          color="#f0932b"
+        />
 
-          <MetricCard
-            label="RANK USED"
-            value={currentMetrics.rank}
-            color="#00f2fe"
-          />
+        <MetricCard
+          label="RANK"
+          value={currentMetrics.rank}
+          color="#00f2fe"
+        />
 
-          <MetricCard
-            label="STATUS"
-            value={currentMetrics.status || 'SEARCHING'}
-            color={currentMetrics.status === 'SOLVED' ? '#43e97b' : currentMetrics.status === 'PARTIAL' ? '#f0932b' : '#666'}
-          />
-        </div>
-      ) : (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="loader" style={{
-            width: '40px', height: '40px',
-            border: '3px solid rgba(0,242,254,0.3)',
-            borderTopColor: '#00f2fe',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite'
-          }} />
-          <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-        </div>
-      )}
-
-      <div style={{ marginTop: 'auto', opacity: 0.5, fontSize: '0.8rem', textAlign: 'center' }}>
-        LIVE TRAINING CONNECTION ACTIVE
+        <MetricCard
+          label="STATUS"
+          value={currentMetrics.step > 0 ? 'LEARNING' : 'IDLE'}
+          color={currentMetrics.step > 0 ? '#43e97b' : '#666'}
+        />
       </div>
+
+      <style>{`
+        .monitor-container {
+            pointer-events: auto; /* enable interaction */
+            background: rgba(0,0,0,0.3);
+            backdrop-filter: blur(5px);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.05);
+            max-width: 400px;
+        }
+        .monitor-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 10px;
+            letter-spacing: 2px;
+            color: #00f2fe;
+            margin-bottom: 20px;
+        }
+        .live-dot {
+            width: 6px; height: 6px;
+            background: #ef4444;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #ef4444;
+            animation: pulse 2s infinite;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+      `}</style>
     </div>
   )
 }
 
-function MetricCard({ label, value, color, large, fullWidth }) {
+function MetricCard({ label, value, color, highlight }) {
   return (
     <div style={{
-      background: 'rgba(255,255,255,0.05)',
-      padding: '15px',
-      borderRadius: '8px',
-      gridColumn: fullWidth ? 'span 2' : 'span 1',
       display: 'flex',
       flexDirection: 'column',
-      alignItems: 'center'
     }}>
-      <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '5px', letterSpacing: '1px' }}>{label}</div>
+      <div style={{ fontSize: '10px', color: '#888', marginBottom: '4px', letterSpacing: '1px' }}>{label}</div>
       <div style={{
-        fontSize: large ? '2.5rem' : '1.8rem',
-        fontWeight: 'bold',
+        fontSize: highlight ? '24px' : '18px',
+        fontWeight: '700',
         color: color || '#fff',
-        fontFamily: "'Outfit', sans-serif"
+        fontFamily: "'JetBrains Mono', monospace",
+        textShadow: color ? `0 0 15px ${color}40` : 'none'
       }}>
         {value}
       </div>

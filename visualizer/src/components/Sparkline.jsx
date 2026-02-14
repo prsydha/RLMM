@@ -1,7 +1,8 @@
-
-import React from 'react'
+import React, { useId } from 'react'
 
 export default function Sparkline({ data, color = '#00f2fe', width = '100%', height = 60, maxItems = 50 }) {
+    const gradientId = useId()
+
     if (!data || data.length < 2) {
         return (
             <div style={{
@@ -12,10 +13,11 @@ export default function Sparkline({ data, color = '#00f2fe', width = '100%', hei
                 justifyContent: 'center',
                 background: 'rgba(255,255,255,0.02)',
                 borderRadius: '4px',
-                color: '#444',
-                fontSize: '0.7rem'
+                color: '#666',
+                fontSize: '0.7rem',
+                border: '1px dashed rgba(255,255,255,0.1)'
             }}>
-                Gathering data...
+                WAITING FOR DATA...
             </div>
         )
     }
@@ -26,13 +28,16 @@ export default function Sparkline({ data, color = '#00f2fe', width = '100%', hei
     const max = Math.max(...values)
     const range = max - min || 1
 
-    // Calculate points
+    // Calculate points: 0..100 for x and y
     const points = values.map((val, i) => {
         const x = (i / (values.length - 1)) * 100
         // Invert Y because SVG 0 is top
         const y = 100 - ((val - min) / range * 100)
         return `${x},${y}`
     }).join(' ')
+
+    // Create area polygon points (start at bottom left, go to points, end at bottom right)
+    const areaPoints = `0,100 ${points} 100,100`
 
     return (
         <div className="sparkline-container" style={{ width, height, position: 'relative' }}>
@@ -43,18 +48,17 @@ export default function Sparkline({ data, color = '#00f2fe', width = '100%', hei
                 preserveAspectRatio="none"
                 style={{ overflow: 'visible' }}
             >
-                {/* Gradient definition */}
                 <defs>
-                    <linearGradient id={`gradient-${color}`} x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stopColor={color} stopOpacity="0.5" />
+                    <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stopColor={color} stopOpacity="0.4" />
                         <stop offset="100%" stopColor={color} stopOpacity="0" />
                     </linearGradient>
                 </defs>
 
                 {/* Area fill */}
                 <polygon
-                    points={`0,100 ${points} 100,100`}
-                    fill={`url(#gradient-${color})`}
+                    points={areaPoints}
+                    fill={`url(#${gradientId})`}
                 />
 
                 {/* Line */}
@@ -70,11 +74,11 @@ export default function Sparkline({ data, color = '#00f2fe', width = '100%', hei
             </svg>
 
             {/* Min/Max Labels */}
-            <div style={{ position: 'absolute', top: 0, right: 0, fontSize: '0.6rem', color: '#666' }}>
-                {max.toFixed(1)}
+            <div style={{ position: 'absolute', top: -5, right: 0, fontSize: '9px', color: '#888', fontFamily: 'monospace' }}>
+                {max.toFixed(2)}
             </div>
-            <div style={{ position: 'absolute', bottom: 0, right: 0, fontSize: '0.6rem', color: '#666' }}>
-                {min.toFixed(1)}
+            <div style={{ position: 'absolute', bottom: -5, right: 0, fontSize: '9px', color: '#888', fontFamily: 'monospace' }}>
+                {min.toFixed(2)}
             </div>
         </div>
     )

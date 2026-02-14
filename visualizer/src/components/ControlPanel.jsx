@@ -1,4 +1,3 @@
-
 import React from 'react'
 import Sparkline from './Sparkline'
 
@@ -9,81 +8,71 @@ export default function ControlPanel({
   lastSuccess,
   rewardHistory,
   residualHistory
-
 }) {
   return (
     <div className="control-panel">
       {/* Connection Status */}
-      <div className="status">
-        <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`}></div>
-        <span>{connected ? 'Connected to Server' : 'Waiting for connection...'}</span>
+      <div className={`section-title`}>SYSTEM STATUS</div>
+      <div className="stat-card" style={{ marginBottom: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`}></div>
+          <span className="stat-value" style={{ fontSize: '13px' }}>
+            {connected ? 'CONNECTED TO SERVER' : 'SEARCHING FOR SIGNAL...'}
+          </span>
+        </div>
       </div>
 
       {/* Rewards Graph */}
       <div className="control-section">
-        <h3>Reward Trend</h3>
-        <div style={{ marginBottom: '10px' }}>
+        <div className="section-title">REWARD TREND</div>
+        <div className="graph-container">
           <Sparkline data={rewardHistory} color={stats.reward > 0 ? '#43e97b' : '#ff6b6b'} height={80} />
         </div>
       </div>
 
       {/* Residual Graph */}
       <div className="control-section">
-        <h3>Residual Norm</h3>
-        <div style={{ marginBottom: '10px' }}>
+        <div className="section-title">RESIDUAL NORM</div>
+        <div className="graph-container">
           <Sparkline
             data={residualHistory || []}
             color={stats.residual < 1 ? '#43e97b' : '#ff6b6b'}
             height={80}
           />
         </div>
-
       </div>
 
       {/* Sparsity & Time */}
       <div className="control-section">
-        <h3>Training Metrics</h3>
-        <div className="stats-panel">
+        <div className="section-title">METRICS</div>
+        <div className="stats-grid">
           {/* Sparsity */}
           {stats.sparsity !== undefined && (
-            <div className="stat-item">
-              <span className="stat-label">Action Sparsity</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '60px', height: '4px', background: '#333', borderRadius: '2px', overflow: 'hidden' }}>
-                  <div style={{
-                    width: `${stats.sparsity * 100}%`,
-                    height: '100%',
-                    background: '#b224ef'
-                  }} />
-                </div>
-                <span className="stat-value">{(stats.sparsity * 100).toFixed(1)}%</span>
+            <div className="stat-card" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px' }}>
+              <span className="stat-label">ACTION SPARSITY</span>
+              <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                <div style={{
+                  width: `${stats.sparsity * 100}%`,
+                  height: '100%',
+                  background: 'var(--accent)',
+                  boxShadow: '0 0 10px var(--accent)'
+                }} />
               </div>
+              <span className="stat-value" style={{ fontSize: '12px', alignSelf: 'flex-end' }}>{(stats.sparsity * 100).toFixed(1)}%</span>
             </div>
           )}
 
-          <div className="stat-item">
-            <span className="stat-label">Last Action</span>
+          <div className="stat-card">
+            <span className="stat-label">LAST ACTION</span>
             <span className="stat-value" style={{
-              color: stats.valid ? '#43e97b' : '#ff6b6b',
-              fontWeight: 'bold'
+              color: stats.valid ? 'var(--success)' : 'var(--error)',
             }}>
               {stats.valid ? 'VALID' : 'INVALID'}
             </span>
           </div>
 
-          {stats.action && (
-            <div className="stat-item" style={{ gridColumn: 'span 2' }}>
-              <span className="stat-label">Action Vectors</span>
-              <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#aaa', marginTop: '5px' }}>
-                <div>u: [{Array.isArray(stats.action.u) ? stats.action.u.join(', ') : 'N/A'}]</div>
-                <div>v: [{Array.isArray(stats.action.v) ? stats.action.v.join(', ') : 'N/A'}]</div>
-                <div>w: [{Array.isArray(stats.action.w) ? stats.action.w.join(', ') : 'N/A'}]</div>
-              </div>
-            </div>
-          )}
-
-          <div className="stat-item">
-            <span className="stat-label">Time Elapsed</span>
+          <div className="stat-card">
+            <span className="stat-label">ELAPSED TIME</span>
             <span className="stat-value highlight">
               {stats.elapsed ? stats.elapsed.toFixed(1) + 's' : '0.0s'}
             </span>
@@ -93,168 +82,123 @@ export default function ControlPanel({
 
       {/* Latest Hit / Best Solution */}
       <div className="control-section">
-        <h3>Insights</h3>
+        <div className="section-title">INSIGHTS</div>
 
         {/* Best Solution Found */}
-        <div className="insight-card best">
-          <div className="insight-label">Best Solution Found</div>
+        <div className={`insight-card best ${bestMetrics ? 'active' : ''}`}>
+          <div className="insight-label">BEST SOLUTION</div>
           {bestMetrics ? (
             <div className="insight-content">
-              <div className="rank-display">Rank {bestMetrics.rank}</div>
-              <div className="step-display">in {bestMetrics.steps} steps</div>
-              <div className="episode-ref">Ep {bestMetrics.episode}</div>
+              <div className="rank-display">RANK {bestMetrics.rank}</div>
+              <div className="step-display">/ {bestMetrics.steps} STEPS</div>
+              <div className="episode-ref">EP {bestMetrics.episode}</div>
             </div>
           ) : (
             <div className="insight-content placeholder">
-              No solutions yet...
+              NO DATA...
             </div>
           )}
         </div>
 
         {/* Latest Hit */}
-        <div className="insight-card latest">
-          <div className="insight-label">Latest Hit (Last Success)</div>
+        <div className={`insight-card latest ${lastSuccess ? 'active' : ''}`}>
+          <div className="insight-label">LATEST SUCCESS</div>
           {lastSuccess ? (
             <div className="insight-content">
-              <div className="rank-display">Rank {lastSuccess.rank}</div>
-              <div className="step-display">in {lastSuccess.steps} steps</div>
-              <div className="episode-ref">Ep {lastSuccess.episode}</div>
+              <div className="rank-display">RANK {lastSuccess.rank}</div>
+              <div className="step-display">/ {lastSuccess.steps} STEPS</div>
+              <div className="episode-ref">EP {lastSuccess.episode}</div>
             </div>
           ) : (
             <div className="insight-content placeholder">
-              Searching...
+              SEARCHING...
             </div>
           )}
         </div>
       </div>
 
-      {/* Training Metrics */}
-      {(stats.loss !== undefined || stats.learning_rate !== undefined) && (
-        <div className="control-section">
-          <h3>Training Progress</h3>
-          <div className="stats-panel">
-            {stats.loss !== undefined && (
-              <div className="stat-item">
-                <span className="stat-label">Total Loss</span>
-                <span className="stat-value">{stats.loss.toFixed(4)}</span>
-              </div>
-            )}
-            {stats.policy_loss !== undefined && (
-              <div className="stat-item">
-                <span className="stat-label">Policy Loss</span>
-                <span className="stat-value">{stats.policy_loss.toFixed(4)}</span>
-              </div>
-            )}
-            {stats.value_loss !== undefined && (
-              <div className="stat-item">
-                <span className="stat-label">Value Loss</span>
-                <span className="stat-value">{stats.value_loss.toFixed(4)}</span>
-              </div>
-            )}
-            {stats.learning_rate !== undefined && (
-              <div className="stat-item">
-                <span className="stat-label">Learning Rate</span>
-                <span className="stat-value">{stats.learning_rate.toExponential(2)}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Live Stats */}
-      <div className="control-section">
-        <h3>Live Stats</h3>
-        <div className="stats-panel">
-          {/* Combined compact stats */}
-          <div className="stat-grid">
-            <div className="stat-box" style={{ gridColumn: 'span 3', background: stats.status === 'SOLVED' ? 'rgba(67, 233, 123, 0.2)' : 'rgba(255,255,255,0.03)' }}>
-              <div className="label">Decision</div>
-              <div className="value" style={{ color: stats.status === 'SOLVED' ? '#43e97b' : '#fff' }}>
-                {stats.status}
-              </div>
-            </div>
-
-            <div className="stat-box">
-              <div className="label">Step</div>
-              <div className="value">{stats.step}</div>
-            </div>
-            <div className="stat-box">
-              <div className="label">Episode</div>
-              <div className="value">{stats.episode || 0}</div>
-            </div>
-            <div className="stat-box">
-              <div className="label">Residual</div>
-              <div className="value tiny" style={{
-                color: stats.residual < 1 ? '#43e97b' : stats.residual < 3 ? '#f0932b' : '#ff6b6b'
-              }}>
-                {typeof stats.residual === 'number' ? stats.residual.toFixed(2) : '0.00'}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <style>{`
-        .insight-card {
-            background: rgba(42, 43, 56, 0.5);
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            border-left: 3px solid #666;
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #666;
+            box-shadow: 0 0 5px #666;
+            transition: all 0.3s;
         }
-        .insight-card.best { border-left-color: #43e97b; }
-        .insight-card.latest { border-left-color: #00f2fe; }
+        .status-dot.connected {
+            background: var(--success);
+            box-shadow: 0 0 10px var(--success);
+        }
+        .status-dot.disconnected {
+            background: var(--error);
+            box-shadow: 0 0 10px var(--error);
+        }
+        
+        .graph-container {
+            background: rgba(0,0,0,0.2);
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .insight-card {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 2px solid #444;
+            transition: all 0.3s ease;
+        }
+        .insight-card.best.active { 
+            border-left-color: var(--success); 
+            background: rgba(0, 210, 255, 0.05);
+        }
+        .insight-card.latest.active { 
+            border-left-color: var(--primary); 
+            background: rgba(0, 242, 254, 0.05);
+        }
         
         .insight-label {
-            font-size: 0.75rem;
+            font-size: 10px;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: #888;
-            margin-bottom: 5px;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            font-weight: 700;
         }
         
         .insight-content {
             display: flex;
             align-items: baseline;
+            flex-wrap: wrap;
             gap: 8px;
+        }
+        
+        .insight-content.placeholder {
+            font-size: 12px;
+            color: #555;
+            font-style: italic;
         }
         
         .rank-display {
-            font-size: 1.2rem;
-            font-weight: bold;
+            font-size: 14px;
+            font-weight: 800;
             color: #fff;
+            font-family: 'JetBrains Mono', monospace;
         }
         
         .step-display {
-            font-size: 0.9rem;
-            color: #aaa;
+            font-size: 12px;
+            color: var(--text-secondary);
         }
         
         .episode-ref {
-            font-size: 0.8rem;
+            font-size: 10px;
             color: #666;
             margin-left: auto;
-        }
-        
-        .stat-value.highlight {
-            font-size: 1.2rem;
-            color: #00f2fe;
-        }
-
-        .stat-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 8px;
-        }
-        .stat-box {
-            text-align: center;
-            background: rgba(255,255,255,0.03);
-            padding: 8px;
+            background: rgba(255,255,255,0.05);
+            padding: 2px 6px;
             border-radius: 4px;
         }
-        .stat-box .label { font-size: 0.7rem; color: #888; margin-bottom: 4px; }
-        .stat-box .value { font-size: 1rem; font-weight: bold; color: #fff; }
-        .stat-box .value.tiny { font-size: 0.85rem; }
       `}</style>
     </div>
   )

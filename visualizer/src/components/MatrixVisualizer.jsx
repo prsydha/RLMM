@@ -6,8 +6,6 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
  * MatrixVisualizer - Enhanced Three.js visualization with:
  * - OrbitControls for camera manipulation
  * - Text labels on cubes showing values
- * - Improved lighting and materials
- * - Smooth animations using lerp
  * - WebSocket support with auto-reconnect
  * - Demo mode fallback
  */
@@ -25,22 +23,22 @@ export default function MatrixVisualizer({
   const beamsRef = useRef([]) // Store active beams
 
   // Matrix state: initialize 2x2 demo
-  const [A, setA] = useState([[1, 2], [3, 4]])
-  const [B, setB] = useState([[5, 6], [7, 8]])
+  const [A, setA] = useState([[1, 0], [0, 1]])
+  const [B, setB] = useState([[1, 1], [0, 1]])
   const [C, setC] = useState([[0, 0], [0, 0]])
 
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
 
-    const width = mount.clientWidth
-    const height = mount.clientHeight // Use parent height
-
+    // FIX: Ensure we have dimensions from parent if mount has none yet
+    const width = mount.clientWidth || mount.parentElement.clientWidth || window.innerWidth
+    const height = mount.clientHeight || mount.parentElement.clientHeight || window.innerHeight
 
     // Scene setup
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0x0a0a15)
-    scene.fog = new THREE.Fog(0x0a0a15, 10, 50)
+    scene.background = new THREE.Color(0x050508)
+    scene.fog = new THREE.Fog(0x050508, 10, 50)
 
     // Camera
     const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000)
@@ -294,7 +292,8 @@ export default function MatrixVisualizer({
       mesh.userData.textSprite.material.dispose()
 
       // Create new sprite (High-Res)
-      const textSprite = createTextSprite(newValue.toFixed(1), '#ffffff')
+      const formattedValue = Number.isInteger(newValue) ? newValue.toString() : newValue.toFixed(1)
+      const textSprite = createTextSprite(formattedValue, '#ffffff')
       textSprite.position.z = 0
       textSprite.renderOrder = 1
       mesh.add(textSprite)
@@ -404,11 +403,10 @@ export default function MatrixVisualizer({
     function startDemo() {
       if (demoInterval) return
 
-      // Randomize matrices for next run
-      const newA = [[Math.floor(Math.random() * 5) + 1, Math.floor(Math.random() * 5) + 1],
-      [Math.floor(Math.random() * 5) + 1, Math.floor(Math.random() * 5) + 1]]
-      const newB = [[Math.floor(Math.random() * 5) + 1, Math.floor(Math.random() * 5) + 1],
-      [Math.floor(Math.random() * 5) + 1, Math.floor(Math.random() * 5) + 1]]
+      // Randomize matrices for next run (values -1, 0, 1)
+      const getRand = () => Math.floor(Math.random() * 3) - 1
+      const newA = [[getRand(), getRand()], [getRand(), getRand()]]
+      const newB = [[getRand(), getRand()], [getRand(), getRand()]]
 
       // Update state and meshes
       setA(newA)
@@ -490,77 +488,154 @@ export default function MatrixVisualizer({
     /**
      * Handle incoming multiplication step
      */
+    /**
+     * Handle incoming messages
+     */
     function handleMessage(data) {
-      setStep(data.step)
+      // 1. Handle Training Step (Rank-1 Update)
+      if (data.type === 'step') {
+        setStep(data.global_step)
+        const { u, v, w } = data.action
 
-      const [ai, ak] = data.A_index
-      const [bk, bj] = data.B_index
-      const [ci, cj] = data.C_index
+        // Helper to update a matrix grid based on a vector
+        const updateGrid = (label, vector, colorHex) => {
+          if (!vector || !meshes[label]) return
 
-      // Create formula string
-      // Create formula string with Colors
-      // Note: We can't style the text here easily in one string without HTML/Canvas overlay, 
-      // but we can make it clearer.
-      // const formula = `C[${ci},${cj}] += A[${ai},${ak}] * B[${bk},${bj}]  ➜  ${data.A_value} * ${data.B_value}`
-      // setCurrentFormula(formula)
+          meshes[label].forEach((mesh, idx) => {
+            const val = vector[idx] || 0
+            updateCubeValue(mesh, val)
 
-      const aMeshIdx = ai * A[0].length + ak
-      const bMeshIdx = bk * B[0].length + bj
-      const cMeshIdx = ci * C[0].length + cj
+            // Highlight non-zero values
+            if (val !== 0) {
+              const color = new THREE.Color(colorHex)
+              targetColors[label][idx].copy(color)
+              targetScales[label][idx].set(1.2, 1.2, 1.2)
 
-      const aMesh = meshes.A[aMeshIdx]
-      const bMesh = meshes.B[bMeshIdx]
-      const cMesh = meshes.C[cMeshIdx]
+              // Reset after a short delay
+              setTimeout(() => {
+                targetColors[label][idx].setHex(colorHex)
+                targetScales[label][idx].set(1, 1, 1)
+              }, 200)
+            } else {
+              // Dim zero values
+              targetColors[label][idx].setHex(0x333333)
+            }
+          })
+        }
 
-      // Highlight operands and result
-      if (aMesh) {
-        highlight(aMesh, 0xffffff, 500)
-        // Draw beam from A to C
-        if (cMesh) createBeam(aMesh.position, cMesh.position, 0x00f2fe)
+        // Update A (Cyan), B (Purple), C (Green)
+        updateGrid('A', u, 0x00f2fe)
+        updateGrid('B', v, 0xb224ef)
+        updateGrid('C', w, 0x43e97b)
+
+        // Draw beams for interactions 
+        // Logic: Connect any active element in A/B to the active elements in C
+        // To reduce clutter, we can connect "center of mass" of A's update to center of mass of C's update?
+        // Or connect all active A -> all active C. Since tensors are sparse (rank-1 mostly zeros), 
+        // this shouldn't be too many lines. Let's try direct connections.
+
+        const activeA = []
+        meshes.A.forEach((m, i) => { if (Math.abs(u[i]) > 0.1) activeA.push(m) })
+
+        const activeB = []
+        meshes.B.forEach((m, i) => { if (Math.abs(v[i]) > 0.1) activeB.push(m) })
+
+        const activeC = []
+        meshes.C.forEach((m, i) => { if (Math.abs(w[i]) > 0.1) activeC.push(m) })
+
+        // 1. Beams from A (Cyan) -> C (Green)
+        activeA.forEach(aMesh => {
+          activeC.forEach(cMesh => {
+            // slightly perturbed start/end or curved lines would look cool, 
+            // but straight lines with glow texture might be enough.
+            createBeam(aMesh.position, cMesh.position, 0x00f2fe)
+          })
+        })
+
+        // 2. Beams from B (Purple) -> C (Green)
+        activeB.forEach(bMesh => {
+          activeC.forEach(cMesh => {
+            createBeam(bMesh.position, cMesh.position, 0xb224ef)
+          })
+        })
+
+        // Stats
+        onStatsUpdate({
+          step: data.global_step,
+          rank: data.rank,
+          reward: data.reward,
+          status: data.status
+        })
+
+        return
       }
-      if (bMesh) {
-        highlight(bMesh, 0xffffff, 500)
-        // Draw beam from B to C
-        if (cMesh) createBeam(bMesh.position, cMesh.position, 0xb224ef)
-      }
-      if (cMesh) highlight(cMesh, 0xffffff, 600)
 
-      // Emit Log
-      const logMsg = `MAC: C[${ci},${cj}] += ${data.A_value.toFixed(2)} * ${data.B_value.toFixed(2)}`
-      if (onLog) onLog(logMsg, 'calc')
+      // 2. Handle Demo/Legacy Message (Element-wise)
+      if (data.A_index) {
+        setStep(data.step)
 
-      // Update C matrix
-      if (data.C_matrix) {
-        setC(data.C_matrix)
+        const [ai, ak] = data.A_index
+        const [bk, bj] = data.B_index
+        const [ci, cj] = data.C_index
 
-        // Update all C cube values and colors
-        const flat = data.C_matrix.flat()
-        const maxVal = Math.max(...flat.map(Math.abs), 1)
+        const aMeshIdx = ai * A[0].length + ak
+        const bMeshIdx = bk * B[0].length + bj
+        const cMeshIdx = ci * C[0].length + cj
 
-        meshes.C.forEach((m, idx) => {
-          const val = flat[idx]
-          updateCubeValue(m, val)
+        const aMesh = meshes.A[aMeshIdx]
+        const bMesh = meshes.B[bMeshIdx]
+        const cMesh = meshes.C[cMeshIdx]
 
-          // Color by magnitude (using Green gradient)
-          const intensity = Math.min(1, Math.abs(val) / maxVal)
-          // Interpolate between dark green and bright lime/white
-          const color = new THREE.Color(0x43e97b)
-          if (val !== 0) {
-            color.lerp(new THREE.Color(0xffffff), intensity * 0.5)
-          } else {
-            color.multiplyScalar(0.3)
-          }
-          targetColors.C[idx].copy(color)
+        // Highlight operands and result
+        if (aMesh) {
+          highlight(aMesh, 0xffffff, 500)
+          // Draw beam from A to C
+          if (cMesh) createBeam(aMesh.position, cMesh.position, 0x00f2fe)
+        }
+        if (bMesh) {
+          highlight(bMesh, 0xffffff, 500)
+          // Draw beam from B to C
+          if (cMesh) createBeam(bMesh.position, cMesh.position, 0xb224ef)
+        }
+        if (cMesh) highlight(cMesh, 0xffffff, 600)
+
+        // Emit Log
+        const logMsg = `MAC: C[${ci},${cj}] += ${data.A_value.toFixed(2)} * ${data.B_value.toFixed(2)}`
+        if (onLog) onLog(logMsg, 'calc')
+
+        // Update C matrix
+        if (data.C_matrix) {
+          setC(data.C_matrix)
+
+          // Update all C cube values and colors
+          const flat = data.C_matrix.flat()
+          const maxVal = Math.max(...flat.map(Math.abs), 1)
+
+          meshes.C.forEach((m, idx) => {
+            const val = flat[idx]
+            updateCubeValue(m, val)
+
+            // Color by magnitude (using Green gradient)
+            const intensity = Math.min(1, Math.abs(val) / maxVal)
+            // Interpolate between dark green and bright lime/white
+            const color = new THREE.Color(0x43e97b)
+            if (val !== 0) {
+              color.lerp(new THREE.Color(0xffffff), intensity * 0.5)
+            } else {
+              color.multiplyScalar(0.3)
+            }
+            targetColors.C[idx].copy(color)
+          })
+        }
+
+        // Update stats
+        onStatsUpdate({
+          step: data.step,
+          totalOps: A.length * B[0].length * A[0].length,
+          elapsed: elapsedTime,
+          matrixSize: `${A.length}×${A[0].length}`
         })
       }
-
-      // Update stats
-      onStatsUpdate({
-        step: data.step,
-        totalOps: A.length * B[0].length * A[0].length,
-        elapsed: elapsedTime,
-        matrixSize: `${A.length}×${A[0].length}`
-      })
     }
 
     // Start logic based on running state
@@ -594,8 +669,8 @@ export default function MatrixVisualizer({
 
     // Handle window resize
     const handleResize = () => {
-      const newWidth = mount.clientWidth
-      const newHeight = mount.clientHeight
+      const newWidth = mount.clientWidth || mount.parentElement.clientWidth || window.innerWidth
+      const newHeight = mount.clientHeight || mount.parentElement.clientHeight || window.innerHeight
       camera.aspect = newWidth / newHeight
       camera.updateProjectionMatrix()
       renderer.setSize(newWidth, newHeight)
@@ -641,18 +716,35 @@ export default function MatrixVisualizer({
   }, [running, paused, speed])
 
   return (
-    <div className="visualizer">
-      <div className="canvas" ref={mountRef} />
-
-      {/* Overlay Info */}
+    <div className="visualizer" style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <div className="canvas" ref={mountRef} style={{ width: '100%', height: '100%' }} />
       <div className="overlay-info">
         <div className="info-badge step-display">
           Step {step}
         </div>
       </div>
-
-      {/* Formula Display */}
-
+      <style>{`
+        .visualizer canvas {
+            display: block;
+            width: 100% !important;
+            height: 100% !important;
+        }
+        .overlay-info {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            pointer-events: none;
+        }
+        .info-badge {
+            background: rgba(0,0,0,0.5);
+            padding: 8px 12px;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #fff;
+            font-size: 12px;
+            font-family: monospace;
+        }
+      `}</style>
     </div>
   )
 }
