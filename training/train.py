@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-import random
 from collections import deque
 import subprocess
 

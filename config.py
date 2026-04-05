@@ -14,11 +14,11 @@ INPUT_DIM = TENSOR_DIM + 3  # 64 (residual tensor) + 3 (metadata: step, rank, no
 
 # --- Training Hyperparameters ---
 LEARNING_RATE = 1e-4        # Lower LR for more stable exploration
-BATCH_SIZE = 100            # Larger batch for better gradient estimates
-REPLAY_BUFFER_SIZE = 20000  # Larger buffer to store diverse solutions
+BATCH_SIZE = 32            # Larger batch for better gradient estimates
+REPLAY_BUFFER_SIZE = 5000  # Larger buffer to store diverse solutions
 EPOCHS = 200                # More epochs for exploration
 EPISODES_PER_EPOCH = 10     # More episodes per epoch
-MCTS_SIMS = 450             # Slightly more simulations for better search
+MCTS_SIMS = 20             # Slightly more simulations for better search
 
 # --- MCTS Settings ---
 CPUCT = 2.0                 # Higher exploration constant
