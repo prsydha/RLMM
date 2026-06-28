@@ -10,11 +10,11 @@ from collections import deque
 import subprocess
 
 # Run benchmark visualization automatically
-try:
-    print("Running benchmark visualization...")
-    subprocess.call(["python", "visualize_benchmark.py"])
-except Exception as e:
-    print(f"Failed to run benchmark visualization: {e}")
+# try:
+#     print("Running benchmark visualization...")
+#     subprocess.call(["python", "visualize_benchmark.py"])
+# except Exception as e:
+#     print(f"Failed to run benchmark visualization: {e}")
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
